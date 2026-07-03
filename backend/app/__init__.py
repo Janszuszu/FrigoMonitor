@@ -1,0 +1,1 @@
+# FrigoMonitor Core
