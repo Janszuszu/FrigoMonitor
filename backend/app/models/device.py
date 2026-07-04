@@ -15,6 +15,7 @@ class Device(Base):
     location = Column(String(200))
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen = Column(DateTime(timezone=True), nullable=True, index=True)
 
     # Relationships
     sensors = relationship("Sensor", back_populates="device", cascade="all, delete-orphan")

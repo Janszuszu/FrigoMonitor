@@ -32,6 +32,7 @@ class MQTTService:
         client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
+        client.on_subscribe = self._on_subscribe
 
         # enable automatic reconnect backoff
         try:
@@ -104,9 +105,13 @@ class MQTTService:
             logger.warning("Subscribe called but MQTT client is not connected")
             return
         try:
-            self._client.subscribe(topic, qos=qos)
+            (result, mid) = self._client.subscribe(topic, qos=qos)
+            logger.info(f"Subscribe request sent: topic={topic} mid={mid} result={result}")
         except Exception:
             logger.exception("Failed to subscribe to MQTT topic")
+
+    def _on_subscribe(self, client: mqtt.Client, userdata, mid, granted_qos):
+        logger.info(f"MQTT subscription acknowledged: mid={mid} qos={granted_qos}")
 
     # Internal paho callbacks
     def _on_connect(self, client: mqtt.Client, userdata, flags, rc: int) -> None:
