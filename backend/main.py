@@ -1,9 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+from app.database import Base, engine
 from app.logger import logger
 from app.api import system, devices, sensors, measurements
+from app.services.device_manager import device_manager as _device_manager
+from app.services.mqtt_service import mqtt_service
 from app.ws.websocket_manager import router as websocket_router
+
+_ = _device_manager
 
 
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
@@ -20,6 +25,13 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     logger.info("FrigoMonitor starting...")
+    Base.metadata.create_all(bind=engine)
+    mqtt_service.connect()
+
+
+@app.on_event("shutdown")
+def shutdown():
+    mqtt_service.disconnect()
 
 
 @app.get("/")

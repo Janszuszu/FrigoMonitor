@@ -10,10 +10,11 @@ Responsibilities:
 from __future__ import annotations
 
 import json
+from datetime import datetime, UTC
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import SessionLocal
 from app.logger import logger
@@ -34,6 +35,8 @@ class DeviceManager:
         try:
             # subscribe to device/sensor topics to learn about devices
             mqtt_service.subscribe('devices/+/sensors/+')
+            mqtt_service.subscribe("frigomonitor/device/+/register")
+            mqtt_service.subscribe("frigomonitor/device/+/sensor/register")
             logger.info("DeviceManager subscribed to devices/+/sensors/+")
         except Exception:
             logger.exception("DeviceManager failed to subscribe on connect")
@@ -60,6 +63,16 @@ class DeviceManager:
 
         topic_parts = [p for p in msg.topic.split("/") if p]
 
+        if self._is_device_register_topic(topic_parts):
+            device_id = topic_parts[2]
+            self._handle_device_register(device_id, data)
+            return
+
+        if self._is_sensor_register_topic(topic_parts):
+            device_id = topic_parts[2]
+            self._handle_sensor_register(device_id, data)
+            return
+
         # heuristics for serial and sensor name
         serial = self._extract_serial(data, topic_parts)
         sensor_name = self._extract_sensor_name(data, topic_parts)
@@ -70,18 +83,189 @@ class DeviceManager:
             logger.debug("MQTT message without identifiable serial; skipping registration")
             return
 
+        if str(serial).startswith("driver-"):
+            logger.debug("Ignoring internal driver message for serial=%s", serial)
+            return
+
         # Use DB session per message
-        with SessionLocal() as session:
-            device = self._get_or_create_device(session, serial, device_name)
-            if sensor_name:
-                self._get_or_create_sensor(session, device, sensor_name, sensor_type)
-            self._update_last_seen(session, device)
+        try:
+            with SessionLocal() as session:
+                device = self._get_or_create_device(session, serial, device_name)
+                if sensor_name:
+                    self._get_or_create_sensor(session, device, sensor_name, sensor_type)
+                self._update_last_seen(session, device)
+        except SQLAlchemyError:
+            logger.error("Database error")
+
+    def _is_device_register_topic(self, topic_parts: list[str]) -> bool:
+        return (
+            len(topic_parts) == 4
+            and topic_parts[0] == "frigomonitor"
+            and topic_parts[1] == "device"
+            and topic_parts[3] == "register"
+        )
+
+    def _is_sensor_register_topic(self, topic_parts: list[str]) -> bool:
+        return (
+            len(topic_parts) == 5
+            and topic_parts[0] == "frigomonitor"
+            and topic_parts[1] == "device"
+            and topic_parts[3] == "sensor"
+            and topic_parts[4] == "register"
+        )
+
+    def _handle_device_register(self, device_id: str, data: dict) -> None:
+        now = datetime.now(UTC)
+        try:
+            with SessionLocal() as session:
+                device, created, duplicate = self._upsert_device_registration(session, device_id, data, now)
+                session.commit()
+                if created:
+                    logger.info("Device created")
+                else:
+                    logger.info("Device updated")
+
+                if duplicate:
+                    logger.warning("Duplicate registration ignored")
+        except SQLAlchemyError:
+            logger.error("Database error")
+
+    def _handle_sensor_register(self, device_id: str, data: dict) -> None:
+        rom = data.get("rom")
+        if not rom:
+            logger.warning("Duplicate registration ignored")
+            return
+
+        now = datetime.now(UTC)
+        try:
+            with SessionLocal() as session:
+                device, _, _ = self._upsert_device_registration(session, device_id, {}, now)
+                sensor, created, duplicate = self._upsert_sensor_registration(session, device, data, now)
+                if sensor is None:
+                    session.rollback()
+                    return
+                session.commit()
+                if created:
+                    logger.info("Sensor created")
+                else:
+                    logger.info("Sensor updated")
+
+                if duplicate:
+                    logger.warning("Duplicate registration ignored")
+        except SQLAlchemyError:
+            logger.error("Database error")
+
+    def _upsert_device_registration(
+        self,
+        session: Session,
+        device_id: str,
+        data: dict,
+        now: datetime,
+    ) -> tuple[Device, bool, bool]:
+        device = session.query(Device).filter(Device.device_id == device_id).one_or_none()
+        if device is None:
+            device = session.query(Device).filter(Device.serial_number == device_id).one_or_none()
+
+        created = False
+        metadata_changed = False
+        if device is None:
+            device = Device(name=str(data.get("board") or device_id), serial_number=device_id, device_id=device_id)
+            session.add(device)
+            created = True
+            metadata_changed = True
+        else:
+            if device.device_id != device_id:
+                device.device_id = device_id
+            if device.serial_number != device_id:
+                device.serial_number = device_id
+
+        metadata_changed = self._update_device_metadata(device, data) or metadata_changed
+        device.last_seen = now
+        return device, created, (not created and not metadata_changed)
+
+    def _update_device_metadata(self, device: Device, data: dict) -> bool:
+        changed = False
+        mappings = {
+            "firmware": "firmware",
+            "build": "build",
+            "board": "board",
+            "chip_id": "chip_id",
+            "mac": "mac",
+            "ip": "ip",
+        }
+        for payload_key, attr_name in mappings.items():
+            if payload_key in data and data[payload_key] is not None:
+                value = str(data[payload_key])
+                if getattr(device, attr_name) != value:
+                    setattr(device, attr_name, value)
+                    changed = True
+        return changed
+
+    def _upsert_sensor_registration(
+        self,
+        session: Session,
+        device: Device,
+        data: dict,
+        now: datetime,
+    ) -> tuple[Optional[Sensor], bool, bool]:
+        rom = str(data.get("rom"))
+        sensor = (
+            session.query(Sensor)
+            .filter(Sensor.device_id == device.id)
+            .filter(Sensor.rom == rom)
+            .one_or_none()
+        )
+
+        created = False
+        duplicate = False
+
+        if sensor is None:
+            sensor = Sensor(
+                device_id=device.id,
+                name=str(data.get("name") or data.get("sensor_id") or rom),
+                sensor_id=str(data.get("sensor_id") or ""),
+                sensor_type=str(data.get("type") or "DS18B20"),
+                unit=str(data.get("unit") or "C"),
+                rom=rom,
+            )
+            session.add(sensor)
+            created = True
+        else:
+            changed = False
+
+            if "sensor_id" in data and data.get("sensor_id") is not None:
+                value = str(data.get("sensor_id"))
+                if sensor.sensor_id != value:
+                    sensor.sensor_id = value
+                    changed = True
+
+            if "name" in data and data.get("name") is not None:
+                value = str(data.get("name"))
+                if sensor.name != value:
+                    sensor.name = value
+                    changed = True
+
+            if "unit" in data and data.get("unit") is not None:
+                value = str(data.get("unit"))
+                if sensor.unit != value:
+                    sensor.unit = value
+                    changed = True
+
+            duplicate = not changed
+
+        sensor.last_seen = now
+        device.last_seen = now
+        return sensor, created, duplicate
 
     def _extract_serial(self, data: dict, topic_parts: list[str]) -> Optional[str]:
         # payload keys
         for key in ("serial_number", "serial", "device_serial", "device"):
             if key in data and data[key]:
                 return str(data[key])
+
+        # topic format: frigomonitor/device/<serial>/...
+        if len(topic_parts) >= 3 and topic_parts[0].lower() == "frigomonitor" and topic_parts[1].lower() == "device":
+            return topic_parts[2]
 
         # topic heuristics: devices/<serial>/...
         if len(topic_parts) >= 2 and topic_parts[0].lower() in ("devices", "device"):
@@ -103,10 +287,6 @@ class DeviceManager:
             idx = topic_parts.index("sensors")
             if idx + 1 < len(topic_parts):
                 return topic_parts[idx + 1]
-
-        # fallback: last topic part may identify sensor
-        if topic_parts:
-            return topic_parts[-1]
 
         return None
 
@@ -143,7 +323,7 @@ class DeviceManager:
 
     def _update_last_seen(self, session: Session, device: Device) -> None:
         try:
-            session.query(Device).filter(Device.id == device.id).update({"last_seen": func.now()})
+            session.query(Device).filter(Device.id == device.id).update({"last_seen": datetime.now(UTC)})
             session.commit()
             logger.debug(f"Updated last_seen for device id={device.id}")
         except Exception:

@@ -5,6 +5,7 @@ from datetime import datetime, UTC
 from typing import Optional
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import or_
 
 from app.database import SessionLocal
 from app.core.event_bus import EVENT_MEASUREMENT_SAVED, Event, event_bus
@@ -60,11 +61,17 @@ class MeasurementService:
                 sensor = (
                     session.query(Sensor)
                     .filter(Sensor.device_id == device.id)
-                    .filter(Sensor.name == sensor_name)
+                    .filter(
+                        or_(
+                            Sensor.name == sensor_name,
+                            Sensor.sensor_id == sensor_name,
+                            Sensor.rom == sensor_name,
+                        )
+                    )
                     .one_or_none()
                 )
                 if sensor is None:
-                    sensor = Sensor(device_id=device.id, name=sensor_name)
+                    sensor = Sensor(device_id=device.id, name=sensor_name, sensor_id=sensor_name)
                     session.add(sensor)
                     session.commit()
                     session.refresh(sensor)

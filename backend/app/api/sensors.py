@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.sensor import Sensor
-from app.schemas.sensor import SensorRead
+from app.schemas.sensor import SensorAlarmUpdate, SensorRead, SensorUpdate
 
 router = APIRouter(tags=["Sensors"])
 
@@ -20,4 +20,38 @@ def get_sensor(sensor_id: int, db: Session = Depends(get_db)):
     sensor = db.query(Sensor).filter(Sensor.id == sensor_id).one_or_none()
     if sensor is None:
         raise HTTPException(status_code=404, detail='Sensor not found')
+    return sensor
+
+
+@router.put('/sensors/{sensor_id}', response_model=SensorRead)
+def update_sensor(sensor_id: int, payload: SensorUpdate, db: Session = Depends(get_db)):
+    sensor = db.query(Sensor).filter(Sensor.id == sensor_id).one_or_none()
+    if sensor is None:
+        raise HTTPException(status_code=404, detail='Sensor not found')
+
+    for field, value in payload.dict(exclude_unset=True).items():
+        setattr(sensor, field, value)
+
+    db.commit()
+    db.refresh(sensor)
+    return sensor
+
+
+@router.put('/sensors/{sensor_id}/alarm', response_model=SensorRead)
+def update_sensor_alarm(sensor_id: int, payload: SensorAlarmUpdate, db: Session = Depends(get_db)):
+    sensor = db.query(Sensor).filter(Sensor.id == sensor_id).one_or_none()
+    if sensor is None:
+        raise HTTPException(status_code=404, detail='Sensor not found')
+
+    if payload.alarm_low is not None and payload.alarm_high is not None and payload.alarm_low >= payload.alarm_high:
+        raise HTTPException(status_code=422, detail='alarm_low must be lower than alarm_high')
+
+    sensor.alarm_enabled = payload.alarm_enabled
+    sensor.alarm_low = payload.alarm_low
+    sensor.alarm_high = payload.alarm_high
+    sensor.alarm_hysteresis = payload.alarm_hysteresis
+    sensor.alarm_activation_delay = payload.alarm_activation_delay
+
+    db.commit()
+    db.refresh(sensor)
     return sensor

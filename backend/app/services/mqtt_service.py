@@ -194,6 +194,7 @@ class MQTTService:
                     "protocol_version": data.get("protocol_version"),
                     "sensor_id": data.get("sensor_id") or data.get("sensor"),
                     "value": data.get("value"),
+                    "measurements": data.get("measurements"),
                     "timestamp": data.get("measured_at") or data.get("timestamp"),
                     "status": data.get("status"),
                 }
@@ -237,9 +238,45 @@ class MQTTService:
 
     def _process_measurement(self, normalized: dict[str, Any]) -> None:
         serial = normalized.get("serial")
+        if serial is None:
+            logger.warning("Invalid normalized measurement payload: %s", normalized)
+            return
+
+        batch = normalized.get("measurements")
+        if isinstance(batch, list):
+            for item in batch:
+                if not isinstance(item, dict):
+                    continue
+                sensor_id = item.get("sensor_id") or item.get("rom")
+                value = item.get("temperature")
+                timestamp = None
+                ts_value = item.get("measured_at") or item.get("timestamp")
+                if ts_value:
+                    try:
+                        timestamp = datetime.fromisoformat(str(ts_value).replace("Z", "+00:00"))
+                    except Exception:
+                        logger.warning("Invalid measurement timestamp: %s", ts_value)
+                        timestamp = None
+
+                if sensor_id is None or value is None:
+                    logger.warning("Invalid normalized measurement payload: %s", normalized)
+                    continue
+
+                try:
+                    value_f = float(value)
+                except (TypeError, ValueError):
+                    logger.warning("Invalid measurement value type: %s", value)
+                    continue
+
+                try:
+                    measurement_service.save_measurement(serial, str(sensor_id), value_f, timestamp=timestamp)
+                except Exception:
+                    logger.exception("Error while calling MeasurementService.save_measurement")
+            return
+
         sensor_id = normalized.get("sensor_id")
         value = normalized.get("value")
-        if serial is None or sensor_id is None or value is None:
+        if sensor_id is None or value is None:
             logger.warning("Invalid normalized measurement payload: %s", normalized)
             return
 

@@ -60,6 +60,33 @@ def test_devices_endpoints():
     assert r.json()["id"] == dev_id
 
 
+def test_create_device_and_sensor_from_api():
+    r = client.post(
+        "/api/v1/devices",
+        json={"name": "Manual fridge", "serial_number": "MANUAL-1", "location": "Cold room"},
+    )
+    assert r.status_code == 201
+    device = r.json()
+    assert device["name"] == "Manual fridge"
+    assert device["serial_number"] == "MANUAL-1"
+
+    r = client.post(
+        f"/api/v1/devices/{device['id']}/sensors",
+        json={"name": "probe_1", "sensor_type": "temperature", "address": "GPIO4", "correction": 0.2},
+    )
+    assert r.status_code == 201
+    sensor = r.json()
+    assert sensor["device_id"] == device["id"]
+    assert sensor["name"] == "probe_1"
+    assert sensor["address"] == "GPIO4"
+
+    duplicate = client.post(
+        "/api/v1/devices",
+        json={"name": "Duplicate", "serial_number": "MANUAL-1"},
+    )
+    assert duplicate.status_code == 409
+
+
 def test_sensors_endpoints_and_measurements():
     with SessionLocal() as s:
         dev = Device(name="API-D2", serial_number="A2")
@@ -87,6 +114,23 @@ def test_sensors_endpoints_and_measurements():
     assert r.status_code == 200
     assert r.json()["id"] == sensor_id
 
+    r = client.put(
+        f"/api/v1/sensors/{sensor_id}/alarm",
+        json={
+            "alarm_enabled": True,
+            "alarm_low": -2.0,
+            "alarm_high": 8.0,
+            "alarm_hysteresis": 0.5,
+            "alarm_activation_delay": 30,
+        },
+    )
+    assert r.status_code == 200
+    alarm_data = r.json()
+    assert alarm_data["alarm_low"] == -2.0
+    assert alarm_data["alarm_high"] == 8.0
+    assert alarm_data["alarm_hysteresis"] == 0.5
+    assert alarm_data["alarm_activation_delay"] == 30
+
     # measurements latest
     r = client.get("/api/v1/measurements/latest?limit=10")
     assert r.status_code == 200
@@ -98,3 +142,26 @@ def test_sensors_endpoints_and_measurements():
     assert r.status_code == 200
     hist = r.json()
     assert all(m["sensor_id"] == sensor_id for m in hist)
+
+
+def test_network_settings_endpoints():
+    r = client.get("/api/v1/system/network")
+    assert r.status_code == 200
+    assert "mqtt_host" in r.json()
+
+    r = client.put(
+        "/api/v1/system/network",
+        json={
+            "mqtt_host": "broker.local",
+            "mqtt_port": 1884,
+            "mqtt_user": "frigo",
+            "mqtt_password": "secret",
+            "frontend_origins": ["http://localhost:5173"],
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["mqtt_host"] == "broker.local"
+    assert data["mqtt_port"] == 1884
+    assert data["mqtt_user"] == "frigo"
+    assert data["mqtt_password_configured"] is True
