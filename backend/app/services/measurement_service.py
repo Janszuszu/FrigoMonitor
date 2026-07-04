@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import SessionLocal
+from app.core.event_bus import EVENT_MEASUREMENT_SAVED, Event, event_bus
 from app.logger import logger
 from app.models.device import Device
 from app.models.sensor import Sensor
@@ -89,6 +90,20 @@ class MeasurementService:
 
         if stored:
             try:
+                event_bus.publish(
+                    Event(
+                        event_type=EVENT_MEASUREMENT_SAVED,
+                        source="MeasurementService",
+                        payload={
+                            "measurement_id": measurement_id,
+                            "sensor_id": sensor_id,
+                            "serial_number": serial_number,
+                            "sensor_name": sensor_name,
+                            "value": value,
+                            "timestamp": ts.isoformat(),
+                        },
+                    )
+                )
                 alarm_service.process_measurement(sensor_id, value, ts, measurement_id=measurement_id)
             except Exception:
                 logger.exception("Error while processing alarm from measurement")

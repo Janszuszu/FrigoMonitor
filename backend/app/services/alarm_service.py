@@ -5,6 +5,13 @@ from typing import Optional
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.core.event_bus import (
+    EVENT_ALARM_ACTIVE,
+    EVENT_ALARM_CLEARED,
+    EVENT_ALARM_PENDING,
+    Event,
+    event_bus,
+)
 from app.database import SessionLocal
 from app.logger import logger
 from app.models.alarm import Alarm
@@ -250,6 +257,7 @@ class AlarmService:
             level,
             f"Alarm pending: {level}",
         )
+        self._publish_alarm_event(sensor, measurement_id, AlarmState.PENDING, level, f"Alarm pending: {level}")
 
     def _transition_state(
         self,
@@ -265,6 +273,7 @@ class AlarmService:
         sensor.alarm_pending_since = None
         session.commit()
         self._create_alarm_event(session, sensor, measurement_id, state, level, message)
+        self._publish_alarm_event(sensor, measurement_id, state, level, message)
 
     def _create_alarm_event(
         self,
@@ -286,6 +295,38 @@ class AlarmService:
         )
         session.add(alarm)
         session.commit()
+
+    def _publish_alarm_event(
+        self,
+        sensor: Sensor,
+        measurement_id: Optional[int],
+        state: str,
+        level: Optional[str],
+        message: str,
+    ) -> None:
+        event_type = {
+            AlarmState.PENDING: EVENT_ALARM_PENDING,
+            AlarmState.ACTIVE: EVENT_ALARM_ACTIVE,
+            AlarmState.CLEARED: EVENT_ALARM_CLEARED,
+        }.get(state)
+
+        if event_type is None:
+            return
+
+        event_bus.publish(
+            Event(
+                event_type=event_type,
+                source="AlarmService",
+                payload={
+                    "device_id": sensor.device_id,
+                    "sensor_id": sensor.id,
+                    "measurement_id": measurement_id,
+                    "state": state,
+                    "level": level,
+                    "message": message,
+                },
+            )
+        )
 
 
 alarm_service = AlarmService()

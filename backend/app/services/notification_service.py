@@ -5,6 +5,16 @@ from datetime import UTC, datetime
 from threading import RLock
 from typing import List
 
+from app.core.event_bus import (
+    EVENT_ALARM_ACTIVE,
+    EVENT_ALARM_CLEARED,
+    EVENT_ALARM_PENDING,
+    EVENT_NOTIFICATION_CREATED,
+    EVENT_NOTIFICATION_SENT,
+    Event,
+    EventBus,
+    event_bus,
+)
 from app.logger import logger
 from app.models.notification import Notification
 
@@ -36,12 +46,23 @@ class WebhookNotifier(Notifier):
         return True
 
 
+ALARM_SEVERITY = {
+    EVENT_ALARM_PENDING: "WARNING",
+    EVENT_ALARM_ACTIVE: "HIGH",
+    EVENT_ALARM_CLEARED: "INFO",
+}
+
+
 class NotificationService:
-    def __init__(self, max_retries: int = 3) -> None:
+    def __init__(self, max_retries: int = 3, bus: EventBus | None = None) -> None:
         self.max_retries = max_retries
         self._drivers: List[Notifier] = []
         self._queue: List[Notification] = []
         self._lock = RLock()
+        self._bus = bus or event_bus
+        self._bus.subscribe(EVENT_ALARM_PENDING, self._handle_alarm_event)
+        self._bus.subscribe(EVENT_ALARM_ACTIVE, self._handle_alarm_event)
+        self._bus.subscribe(EVENT_ALARM_CLEARED, self._handle_alarm_event)
 
     def register_driver(self, driver: Notifier) -> None:
         with self._lock:
@@ -53,11 +74,18 @@ class NotificationService:
         with self._lock:
             notification.status = NotificationStatus.QUEUED
         logger.info("Notification queued: %s", notification.title)
+        self._publish_notification_event(
+            EVENT_NOTIFICATION_CREATED,
+            notification,
+        )
         return notification
 
     def send(self, notification: Notification) -> bool:
         self._track(notification)
-        return self._deliver(notification)
+        result = self._deliver(notification)
+        if result:
+            self._publish_notification_event(EVENT_NOTIFICATION_SENT, notification)
+        return result
 
     def retry_failed(self) -> int:
         retried = 0
@@ -117,6 +145,34 @@ class NotificationService:
             notification.retry_count = (notification.retry_count or 0) + 1
             logger.error("Delivery failed: %s", notification.title)
             return False
+
+    def _handle_alarm_event(self, event: Event) -> None:
+        payload = event.payload or {}
+        notification = Notification(
+            type=event.event_type,
+            title=payload.get("title") or f"Alarm event: {event.event_type}",
+            message=payload.get("message") or f"Alarm event received from {event.source}",
+            severity=payload.get("severity") or ALARM_SEVERITY.get(event.event_type, "INFO"),
+        )
+        self.queue(notification)
+        self.send(notification)
+
+    def _publish_notification_event(self, event_type: str, notification: Notification) -> None:
+        self._bus.publish(
+            Event(
+                event_type=event_type,
+                source="NotificationService",
+                payload={
+                    "notification_id": notification.id,
+                    "type": notification.type,
+                    "title": notification.title,
+                    "message": notification.message,
+                    "severity": notification.severity,
+                    "status": notification.status,
+                    "retry_count": notification.retry_count,
+                },
+            )
+        )
 
 
 notification_service = NotificationService()

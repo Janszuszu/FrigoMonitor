@@ -5,6 +5,13 @@ sys.path.insert(0, os.path.join(os.getcwd(), "backend"))
 
 import pytest
 
+from app.core.event_bus import (
+    EVENT_ALARM_ACTIVE,
+    EVENT_NOTIFICATION_CREATED,
+    EVENT_NOTIFICATION_SENT,
+    Event,
+    EventBus,
+)
 from app.database import Base, engine
 from app.models.notification import Notification
 from app.services.notification_service import (
@@ -145,3 +152,32 @@ def test_retry_failed_resends_notification(caplog):
     assert len(service._queue) == 0
     assert driver.calls == 2
     assert any("Retry notification" in record.message for record in caplog.records)
+
+
+def test_notification_service_auto_registers_with_event_bus():
+    bus = EventBus()
+    service = NotificationService(bus=bus)
+    driver = RecordingNotifier()
+    created_events = []
+    sent_events = []
+
+    bus.subscribe(EVENT_NOTIFICATION_CREATED, created_events.append)
+    bus.subscribe(EVENT_NOTIFICATION_SENT, sent_events.append)
+    service.register_driver(driver)
+
+    bus.publish(
+        Event(
+            event_type=EVENT_ALARM_ACTIVE,
+            source="AlarmService",
+            payload={
+                "title": "Temperature alarm",
+                "message": "Temperature exceeded threshold",
+                "severity": "HIGH",
+            },
+        )
+    )
+
+    assert created_events and created_events[0].event_type == EVENT_NOTIFICATION_CREATED
+    assert sent_events and sent_events[0].event_type == EVENT_NOTIFICATION_SENT
+    assert driver.sent == ["Temperature alarm"]
+    assert len(service._queue) == 0
