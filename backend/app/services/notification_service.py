@@ -15,6 +15,7 @@ from app.core.event_bus import (
     EventBus,
     event_bus,
 )
+from app.config import settings
 from app.logger import logger
 from app.models.notification import Notification
 
@@ -31,11 +32,6 @@ class Notifier(ABC):
         raise NotImplementedError
 
 
-class TelegramNotifier(Notifier):
-    def send(self, notification: Notification) -> bool:
-        return True
-
-
 class EmailNotifier(Notifier):
     def send(self, notification: Notification) -> bool:
         return True
@@ -46,9 +42,12 @@ class WebhookNotifier(Notifier):
         return True
 
 
+TelegramNotifier = __import__("app.drivers.telegram_notifier", fromlist=["TelegramNotifier"]).TelegramNotifier
+
+
 ALARM_SEVERITY = {
     EVENT_ALARM_PENDING: "WARNING",
-    EVENT_ALARM_ACTIVE: "HIGH",
+    EVENT_ALARM_ACTIVE: "CRITICAL",
     EVENT_ALARM_CLEARED: "INFO",
 }
 
@@ -63,6 +62,8 @@ class NotificationService:
         self._bus.subscribe(EVENT_ALARM_PENDING, self._handle_alarm_event)
         self._bus.subscribe(EVENT_ALARM_ACTIVE, self._handle_alarm_event)
         self._bus.subscribe(EVENT_ALARM_CLEARED, self._handle_alarm_event)
+        if settings.TELEGRAM_ENABLED:
+            self.register_driver(TelegramNotifier())
 
     def register_driver(self, driver: Notifier) -> None:
         with self._lock:
@@ -154,6 +155,8 @@ class NotificationService:
             message=payload.get("message") or f"Alarm event received from {event.source}",
             severity=payload.get("severity") or ALARM_SEVERITY.get(event.event_type, "INFO"),
         )
+        notification.device = payload.get("device") or payload.get("device_id")
+        notification.sensor = payload.get("sensor") or payload.get("sensor_id")
         self.queue(notification)
         self.send(notification)
 

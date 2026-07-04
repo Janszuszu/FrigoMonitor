@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     MQTT_USER: str = ""
     MQTT_PASSWORD: str = ""
     LOG_LEVEL: str = "INFO"
+    TELEGRAM_ENABLED: bool = False
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
     # Measurement limits (defaults in degrees Celsius)
     MEASUREMENT_MIN: float = -100.0
     MEASUREMENT_MAX: float = 100.0
