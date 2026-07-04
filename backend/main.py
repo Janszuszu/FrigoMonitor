@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.logger import logger
 from app.api import system, devices, sensors, measurements
@@ -6,6 +7,14 @@ from app.ws.websocket_manager import router as websocket_router
 
 
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.frontend_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")

@@ -16,9 +16,14 @@ class Settings(BaseSettings):
     TELEGRAM_ENABLED: bool = False
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
+    FRONTEND_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
     # Measurement limits (defaults in degrees Celsius)
     MEASUREMENT_MIN: float = -100.0
     MEASUREMENT_MAX: float = 100.0
+
+    @property
+    def frontend_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.FRONTEND_ORIGINS.split(",") if origin.strip()]
 
 @lru_cache
 def get_settings():
