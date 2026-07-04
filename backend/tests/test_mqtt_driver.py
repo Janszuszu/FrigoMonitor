@@ -90,8 +90,34 @@ def test_reconnect_triggers_subscriptions(monkeypatch):
     ms = mqtt_service.mqtt_service
     monkeypatch.setattr(ms, "subscribe", fake_sub)
     ms._on_connect(None, None, None, 0)
-    # expect at least the measurement topic subscription
-    assert any("/measurement" in t for t, _ in calls)
+    # expect both protocol and legacy topic subscriptions
+    assert any("/measurement" in t and t.startswith("frigomonitor") for t, _ in calls)
+    assert any(t == "devices/+/sensors/+" for t, _ in calls)
+    assert any(t == "devices/+/heartbeat" for t, _ in calls)
+    assert any(t == "devices/+/status" for t, _ in calls)
+
+
+def test_legacy_measurement_topic_uses_same_processing_path(monkeypatch):
+    events = []
+
+    def fake_save(serial, sensor_id, value, timestamp=None):
+        events.append((serial, sensor_id, value, timestamp))
+        return True
+
+    monkeypatch.setattr(measurement_service, "save_measurement", fake_save)
+
+    payload = {"protocol_version": mqtt_protocol.PROTOCOL_VERSION, "serial_number": "DEV_LEG", "value": 4.2}
+    legacy_msg = DummyMsg("devices/DEV_LEG/sensors/sensorA", json.dumps(payload).encode())
+    mqtt_service.mqtt_service._on_message(None, None, legacy_msg)
+
+    new_msg = DummyMsg(mqtt_protocol.topic_measurement("DEV_LEG"), json.dumps({"protocol_version": mqtt_protocol.PROTOCOL_VERSION, "serial_number": "DEV_LEG", "sensor_id": "sensorA", "value": 4.2}).encode())
+    mqtt_service.mqtt_service._on_message(None, None, new_msg)
+
+    assert len(events) == 2
+    assert events[0][0:3] == events[1][0:3]
+    assert events[0][0] == "DEV_LEG"
+    assert events[0][1] == "sensorA"
+    assert events[0][2] == 4.2
 
 
 def test_no_direct_db_import_in_mqtt_service():

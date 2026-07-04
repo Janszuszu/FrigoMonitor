@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import threading
 import json
-from typing import Optional, Callable
+from datetime import datetime, UTC
+from typing import Any, Optional, Callable
 
 import paho.mqtt.client as mqtt
 
@@ -139,6 +140,12 @@ class MQTTService:
             self.subscribe(f"{base}/device/+/measurement", qos=mqtt_protocol.RECOMMENDED_QOS.get("measurement", 1))
             self.subscribe(f"{base}/device/+/alarm", qos=mqtt_protocol.RECOMMENDED_QOS.get("alarm", 1))
             self.subscribe(f"{base}/device/+/status", qos=mqtt_protocol.RECOMMENDED_QOS.get("status", 1))
+            # legacy compatibility topics; remove in FrigoMonitor v1.0
+            self.subscribe("devices/+/sensors/+", qos=mqtt_protocol.RECOMMENDED_QOS.get("measurement", 1))
+            self.subscribe("devices/+/heartbeat", qos=mqtt_protocol.RECOMMENDED_QOS.get("heartbeat", 0))
+            self.subscribe("devices/+/status", qos=mqtt_protocol.RECOMMENDED_QOS.get("status", 1))
+            self.subscribe("devices/+/alarm", qos=mqtt_protocol.RECOMMENDED_QOS.get("alarm", 1))
+            # TODO: Remove legacy topics in FrigoMonitor v1.0
         except Exception:
             logger.exception("Failed to subscribe to protocol topics on connect")
 
@@ -158,84 +165,158 @@ class MQTTService:
 
         # paho with loop_start will attempt automatic reconnect if reconnect_delay_set is used
 
-    def _on_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
-        logger.info(f"MQTT message received on {msg.topic}")
-
-        # decode payload
+    def _normalize_message(self, msg: mqtt.MQTTMessage) -> dict[str, Any] | None:
         try:
             payload_raw = msg.payload.decode("utf-8") if msg.payload is not None else ""
         except Exception:
             payload_raw = ""
 
-        data = {}
+        data: dict[str, Any] = {}
         if payload_raw:
             try:
                 data = json.loads(payload_raw)
             except Exception:
                 logger.warning("Invalid payload: not JSON")
-                if self.on_message_cb:
-                    try:
-                        self.on_message_cb(client, userdata, msg)
-                    except Exception:
-                        logger.exception("on_message callback raised an exception")
-                return
+                return {"raw_msg": msg, "invalid_json": True}
 
-        # basic protocol validation
-        pv = data.get("protocol_version")
+        topic_parts = [p for p in msg.topic.split("/") if p]
+        normalized: dict[str, Any] = {
+            "topic": msg.topic,
+            "data": data,
+            "legacy": False,
+        }
+
+        if len(topic_parts) >= 4 and topic_parts[0] == mqtt_protocol.TOPIC_PREFIX and topic_parts[1] == "device":
+            normalized.update(
+                {
+                    "serial": topic_parts[2],
+                    "type": topic_parts[3],
+                    "protocol_version": data.get("protocol_version"),
+                    "sensor_id": data.get("sensor_id") or data.get("sensor"),
+                    "value": data.get("value"),
+                    "timestamp": data.get("measured_at") or data.get("timestamp"),
+                    "status": data.get("status"),
+                }
+            )
+            return normalized
+
+        if len(topic_parts) >= 4 and topic_parts[0].lower() == "devices" and topic_parts[2].lower() == "sensors":
+            # Legacy topic format: devices/<serial>/sensors/<sensor_id>
+            normalized.update(
+                {
+                    "serial": topic_parts[1],
+                    "type": "measurement",
+                    "sensor_id": topic_parts[3],
+                    "value": data.get("value") or data.get("val") or data.get("measurement"),
+                    "timestamp": data.get("measured_at") or data.get("timestamp"),
+                    "protocol_version": data.get("protocol_version") or mqtt_protocol.PROTOCOL_VERSION,
+                    "legacy": True,
+                }
+            )
+            return normalized
+
+        if len(topic_parts) >= 3 and topic_parts[0].lower() == "devices" and topic_parts[2].lower() in {"heartbeat", "status", "alarm"}:
+            normalized.update(
+                {
+                    "serial": topic_parts[1],
+                    "type": topic_parts[2].lower(),
+                    "protocol_version": data.get("protocol_version"),
+                    "status": data.get("status"),
+                }
+            )
+            return normalized
+
+        return normalized
+
+    def _validate_protocol(self, normalized: dict[str, Any]) -> bool:
+        pv = normalized.get("protocol_version")
         if pv and pv != mqtt_protocol.PROTOCOL_VERSION:
             logger.warning("Unknown protocol version: %s", pv)
+            return False
+        return True
+
+    def _process_measurement(self, normalized: dict[str, Any]) -> None:
+        serial = normalized.get("serial")
+        sensor_id = normalized.get("sensor_id")
+        value = normalized.get("value")
+        if serial is None or sensor_id is None or value is None:
+            logger.warning("Invalid normalized measurement payload: %s", normalized)
             return
 
-        # route by topic structure: frigomonitor/device/{serial}/{type}
-        parts = [p for p in msg.topic.split("/") if p]
-        if len(parts) >= 4 and parts[0] == mqtt_protocol.TOPIC_PREFIX and parts[1] == "device":
-            serial = parts[2]
-            mtype = parts[3]
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            logger.warning("Invalid measurement value type: %s", normalized.get("value"))
+            return
 
-            if mtype == "heartbeat":
-                logger.info("Heartbeat received from %s", serial)
-                # allow device_manager to register/update last_seen
-                if self.on_message_cb:
-                    try:
-                        self.on_message_cb(client, userdata, msg)
-                    except Exception:
-                        logger.exception("on_message callback raised an exception")
-                return
+        timestamp = None
+        ts_value = normalized.get("timestamp")
+        if ts_value:
+            try:
+                timestamp = datetime.fromisoformat(ts_value.replace("Z", "+00:00"))
+            except Exception:
+                logger.warning("Invalid measurement timestamp: %s", ts_value)
+                timestamp = None
 
-            if mtype == "measurement":
-                logger.info("Measurement received from %s", serial)
-                # Expect measurement payload fields: sensor_id, value, measured_at(optional)
-                sensor_id = data.get("sensor_id") or data.get("sensor")
-                value = data.get("value")
-                if sensor_id is None or value is None:
-                    logger.warning("Invalid payload: missing sensor_id or value")
-                    return
-                # call measurement service
+        try:
+            measurement_service.save_measurement(serial, sensor_id, value, timestamp=timestamp)
+        except Exception:
+            logger.exception("Error while calling MeasurementService.save_measurement")
+
+    def _on_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
+        logger.info(f"MQTT message received on {msg.topic}")
+
+        normalized = self._normalize_message(msg)
+        if normalized is None:
+            if self.on_message_cb:
                 try:
-                    # measurement_service expects timestamp as datetime; it can accept None
-                    measurement_service.save_measurement(serial, sensor_id, float(value), timestamp=None)
+                    self.on_message_cb(client, userdata, msg)
                 except Exception:
-                    logger.exception("Error while calling MeasurementService.save_measurement")
-                # also allow device_manager to register device if needed
-                if self.on_message_cb:
-                    try:
-                        self.on_message_cb(client, userdata, msg)
-                    except Exception:
-                        logger.exception("on_message callback raised an exception")
-                return
+                    logger.exception("on_message callback raised an exception")
+            return
 
-            if mtype == "alarm":
-                logger.info("Alarm received from %s", serial)
-                # stub: no business logic yet
-                # allow device_manager to process if needed
-                if self.on_message_cb:
-                    try:
-                        self.on_message_cb(client, userdata, msg)
-                    except Exception:
-                        logger.exception("on_message callback raised an exception")
-                return
+        if normalized.get("invalid_json"):
+            if self.on_message_cb:
+                try:
+                    self.on_message_cb(client, userdata, msg)
+                except Exception:
+                    logger.exception("on_message callback raised an exception")
+            return
 
-        # fallback: call registered callback
+        if not self._validate_protocol(normalized):
+            return
+
+        event_type = normalized.get("type")
+        serial = normalized.get("serial")
+
+        if event_type == "heartbeat":
+            logger.info("Heartbeat received from %s", serial)
+            if self.on_message_cb:
+                try:
+                    self.on_message_cb(client, userdata, msg)
+                except Exception:
+                    logger.exception("on_message callback raised an exception")
+            return
+
+        if event_type == "measurement":
+            logger.info("Measurement received from %s", serial)
+            self._process_measurement(normalized)
+            if self.on_message_cb:
+                try:
+                    self.on_message_cb(client, userdata, msg)
+                except Exception:
+                    logger.exception("on_message callback raised an exception")
+            return
+
+        if event_type == "alarm":
+            logger.info("Alarm received from %s", serial)
+            if self.on_message_cb:
+                try:
+                    self.on_message_cb(client, userdata, msg)
+                except Exception:
+                    logger.exception("on_message callback raised an exception")
+            return
+
         if self.on_message_cb:
             try:
                 self.on_message_cb(client, userdata, msg)
