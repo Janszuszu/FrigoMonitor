@@ -14,7 +14,8 @@ class Alarm(Base):
     sensor_id = Column(Integer, ForeignKey("sensors.id"), index=True, nullable=True)
     measurement_id = Column(Integer, ForeignKey("measurements.id"), index=True, nullable=True)
 
-    level = Column(String(20), nullable=False)
+    state = Column(String(20), nullable=False)
+    level = Column(String(20), nullable=True)
     message = Column(String(255))
     active = Column(Boolean, default=True, index=True)
 

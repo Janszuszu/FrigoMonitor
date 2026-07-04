@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -16,6 +16,15 @@ class Sensor(Base):
     sensor_type = Column(String(50))
     address = Column(String(100))
     correction = Column(Float, default=0.0)
+
+    alarm_enabled = Column(Boolean, default=True, nullable=False, index=True)
+    alarm_low = Column(Float, nullable=True)
+    alarm_high = Column(Float, nullable=True)
+    alarm_hysteresis = Column(Float, default=0.0, nullable=False)
+    alarm_activation_delay = Column(Integer, default=0, nullable=False)
+    alarm_state = Column(String(20), default="NORMAL", nullable=False, index=True)
+    alarm_level = Column(String(20), nullable=True)
+    alarm_pending_since = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_value = Column(Float, nullable=True, index=False)

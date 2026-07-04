@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import threading
 import json
-from datetime import datetime, UTC
+from datetime import datetime
 from typing import Any, Optional, Callable
 
 import paho.mqtt.client as mqtt

@@ -11,6 +11,7 @@ from app.logger import logger
 from app.models.device import Device
 from app.models.sensor import Sensor
 from app.models.measurement import Measurement
+from app.services.alarm_service import alarm_service
 from app.config import settings
 
 
@@ -70,6 +71,8 @@ class MeasurementService:
                 # create measurement
                 m = Measurement(sensor_id=sensor.id, measured_at=ts, value=value)
                 session.add(m)
+                session.commit()
+                measurement_id = m.id
 
                 # update sensor/device fields
                 sensor.last_value = value
@@ -78,10 +81,18 @@ class MeasurementService:
 
                 session.commit()
                 logger.info("Measurement stored: device=%s sensor=%s value=%s", serial_number, sensor_name, value)
-                return True
+                sensor_id = sensor.id
+                stored = True
         except SQLAlchemyError:
             logger.exception("Database error while storing measurement")
             return False
+
+        if stored:
+            try:
+                alarm_service.process_measurement(sensor_id, value, ts, measurement_id=measurement_id)
+            except Exception:
+                logger.exception("Error while processing alarm from measurement")
+        return stored
 
 
 # module-level default service
