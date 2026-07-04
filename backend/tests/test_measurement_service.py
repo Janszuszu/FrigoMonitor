@@ -1,6 +1,6 @@
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 sys.path.insert(0, os.path.join(os.getcwd(), "backend"))
 
@@ -32,7 +32,7 @@ def test_measurement_inserted_and_last_values():
         s.commit()
         s.refresh(dev)
 
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     ok = measurement_service.save_measurement("DEV1", "s1", 12.5, timestamp=now)
     assert ok
 
@@ -52,7 +52,7 @@ def test_duplicate_sensor_not_created_and_last_measurement_updated():
         s.commit()
         s.refresh(dev)
 
-    t1 = datetime.utcnow()
+    t1 = datetime.now(UTC)
     assert measurement_service.save_measurement("DEV2", "sdup", 1.1, timestamp=t1)
     t2 = t1 + timedelta(seconds=10)
     assert measurement_service.save_measurement("DEV2", "sdup", 2.2, timestamp=t2)
@@ -63,7 +63,11 @@ def test_duplicate_sensor_not_created_and_last_measurement_updated():
         assert len(sensors) == 1
         sensor = sensors[0]
         assert sensor.last_value == 2.2
-        assert sensor.last_measurement >= t2
+        # DB may return naive datetimes for SQLite; make timezone-aware for comparison
+        lm = sensor.last_measurement
+        if lm is not None and lm.tzinfo is None:
+            lm = lm.replace(tzinfo=UTC)
+        assert lm >= t2
 
 
 def test_invalid_values_rejected():

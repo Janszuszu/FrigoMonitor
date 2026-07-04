@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -44,7 +44,7 @@ class MeasurementService:
             logger.warning("Invalid measurement: out of range (%s not in %s..%s)", value, self.min_value, self.max_value)
             return False
 
-        ts = timestamp or datetime.utcnow()
+        ts = timestamp or datetime.now(UTC)
 
         try:
             with SessionLocal() as session:
