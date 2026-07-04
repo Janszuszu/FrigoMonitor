@@ -97,6 +97,39 @@ class DeviceManager:
         except SQLAlchemyError:
             logger.error("Database error")
 
+    def ensure_registered(
+        self,
+        device_id: str,
+        device_data: dict | None = None,
+        sensor_data_list: list[dict] | None = None,
+    ) -> None:
+        """Ensure a device and mapped sensors exist.
+
+        This API is intended for internal drivers that are not MQTT-based
+        (for example Modbus RTU), while preserving the same registration logic.
+        """
+        if not device_id:
+            return
+
+        now = datetime.now(UTC)
+        sensor_data_list = sensor_data_list or []
+
+        try:
+            with SessionLocal() as session:
+                device, _, _ = self._upsert_device_registration(session, device_id, device_data or {}, now)
+
+                for sensor_data in sensor_data_list:
+                    sensor_payload = dict(sensor_data)
+                    if not sensor_payload.get("rom"):
+                        fallback = sensor_payload.get("sensor_id") or sensor_payload.get("name")
+                        if fallback:
+                            sensor_payload["rom"] = str(fallback)
+                    self._upsert_sensor_registration(session, device, sensor_payload, now)
+
+                session.commit()
+        except SQLAlchemyError:
+            logger.error("Database error")
+
     def _is_device_register_topic(self, topic_parts: list[str]) -> bool:
         return (
             len(topic_parts) == 4
