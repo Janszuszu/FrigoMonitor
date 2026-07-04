@@ -32,6 +32,9 @@ function formatTime(value: string | null | undefined): string {
             Sensor
           </th>
           <th class="px-4 py-3">
+            ROM
+          </th>
+          <th class="px-4 py-3">
             Temperature
           </th>
           <th class="px-4 py-3">
@@ -53,6 +56,9 @@ function formatTime(value: string | null | undefined): string {
           </td>
           <td class="px-4 py-3 text-fm-text">
             {{ sensor.name }}
+          </td>
+          <td class="px-4 py-3 text-fm-muted">
+            {{ sensor.rom || sensor.address || "-" }}
           </td>
           <td class="px-4 py-3 text-fm-accent">
             {{ formatTemperature(sensor.last_value) }}

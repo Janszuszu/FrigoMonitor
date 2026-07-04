@@ -44,5 +44,12 @@ onMounted(async () => {
       :devices="devicesStore.items"
       :online-device-ids="onlineIds"
     />
+
+    <p
+      v-if="devicesStore.error"
+      class="text-sm text-fm-muted"
+    >
+      Device API unavailable. Keeping last known data.
+    </p>
   </section>
 </template>

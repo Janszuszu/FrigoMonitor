@@ -9,12 +9,12 @@ const systemStore = useSystemStore();
 
 const wsLabel = computed(() => {
   if (measurementsStore.wsState === "connected") {
-    return "WS Connected";
+    return "Connected";
   }
   if (measurementsStore.wsState === "connecting") {
-    return "WS Connecting";
+    return "Connecting...";
   }
-  return "WS Offline";
+  return "Disconnected";
 });
 
 const wsClass = computed(() => {
@@ -36,6 +36,9 @@ const wsClass = computed(() => {
       </h2>
       <p class="text-sm text-fm-muted">
         Backend: {{ systemStore.backendUrl }}
+      </p>
+      <p class="text-xs text-fm-muted">
+        Version: {{ systemStore.health?.version || "unknown" }}
       </p>
     </div>
 

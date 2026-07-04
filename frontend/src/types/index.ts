@@ -2,19 +2,23 @@ export interface Device {
   id: number;
   name: string;
   serial_number: string | null;
+  device_id?: string | null;
   location: string | null;
   created_at: string | null;
   last_seen: string | null;
   firmware?: string | null;
   ip?: string | null;
+  status?: string | null;
 }
 
 export interface Sensor {
   id: number;
   device_id: number;
   name: string;
+  sensor_id?: string | null;
   sensor_type?: string | null;
   address?: string | null;
+  rom?: string | null;
   correction?: number | null;
   alarm_state: string;
   alarm_level?: string | null;
@@ -44,6 +48,8 @@ export interface AlarmRow {
 
 export interface SystemHealth {
   status: string;
+  name?: string;
+  version?: string;
   app?: string;
 }
 
@@ -58,5 +64,5 @@ export interface NetworkSettings {
 export interface LiveEvent {
   event?: string;
   timestamp?: string;
-  payload?: Record<string, unknown>;
+  payload?: Record<string, unknown> | null;
 }

@@ -97,5 +97,12 @@ onMounted(async () => {
         </tbody>
       </table>
     </div>
+
+    <p
+      v-if="sensorsStore.error"
+      class="text-sm text-fm-muted"
+    >
+      Alarm source API unavailable. Live updates will appear when WebSocket events arrive.
+    </p>
   </section>
 </template>

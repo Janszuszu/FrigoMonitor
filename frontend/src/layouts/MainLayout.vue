@@ -3,15 +3,19 @@ import { onMounted } from "vue";
 
 import Sidebar from "@/components/Sidebar.vue";
 import TopBar from "@/components/TopBar.vue";
+import { useDevicesStore } from "@/stores/devices";
 import { useMeasurementsStore } from "@/stores/measurements";
+import { useSensorsStore } from "@/stores/sensors";
 import { useSystemStore } from "@/stores/system";
 
+const devicesStore = useDevicesStore();
 const measurementsStore = useMeasurementsStore();
+const sensorsStore = useSensorsStore();
 const systemStore = useSystemStore();
 
 onMounted(async () => {
   try {
-    await systemStore.load();
+    await Promise.all([systemStore.load(), devicesStore.load(), sensorsStore.load(), measurementsStore.load()]);
   } catch (error) {
     console.error("Failed to load system information", error);
   }

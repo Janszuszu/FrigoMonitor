@@ -10,9 +10,11 @@ export class FrigoWebSocket {
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
   private heartbeatTimer: number | null = null;
+  private heartbeatTimeoutTimer: number | null = null;
   private messageHandler: MessageHandler;
   private stateHandler: StateHandler;
   private reconnectDelayMs = 2000;
+  private heartbeatTimeoutMs = 30000;
 
   constructor(messageHandler: MessageHandler, stateHandler: StateHandler) {
     this.messageHandler = messageHandler;
@@ -29,22 +31,21 @@ export class FrigoWebSocket {
     this.ws.onopen = () => {
       this.stateHandler("connected");
       this.startHeartbeat();
+      this.bumpHeartbeatTimeout();
     };
 
     this.ws.onmessage = (event) => {
+      this.bumpHeartbeatTimeout();
       try {
         this.messageHandler(JSON.parse(event.data) as LiveEvent);
       } catch (_error) {
-        this.messageHandler({
-          event: "raw",
-          timestamp: new Date().toISOString(),
-          payload: { raw: event.data },
-        });
+        // Ignore unknown/raw payload safely.
       }
     };
 
     this.ws.onclose = () => {
       this.stopHeartbeat();
+      this.stopHeartbeatTimeout();
       this.stateHandler("disconnected");
       this.scheduleReconnect();
     };
@@ -61,6 +62,7 @@ export class FrigoWebSocket {
     }
 
     this.stopHeartbeat();
+    this.stopHeartbeatTimeout();
 
     if (this.ws) {
       this.ws.close();
@@ -94,6 +96,22 @@ export class FrigoWebSocket {
     if (this.heartbeatTimer) {
       window.clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+  }
+
+  private bumpHeartbeatTimeout(): void {
+    this.stopHeartbeatTimeout();
+    this.heartbeatTimeoutTimer = window.setTimeout(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.close();
+      }
+    }, this.heartbeatTimeoutMs);
+  }
+
+  private stopHeartbeatTimeout(): void {
+    if (this.heartbeatTimeoutTimer) {
+      window.clearTimeout(this.heartbeatTimeoutTimer);
+      this.heartbeatTimeoutTimer = null;
     }
   }
 }

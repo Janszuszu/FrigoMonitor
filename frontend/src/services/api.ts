@@ -31,13 +31,23 @@ export async function fetchSensors(): Promise<Sensor[]> {
 }
 
 export async function fetchMeasurements(limit = 100): Promise<Measurement[]> {
-  const response = await api.get<Measurement[]>(`/measurements/latest?limit=${limit}`);
-  return response.data;
+  try {
+    const response = await api.get<Measurement[]>(`/measurements?limit=${limit}`);
+    return response.data;
+  } catch (_error) {
+    const fallback = await api.get<Measurement[]>(`/measurements/latest?limit=${limit}`);
+    return fallback.data;
+  }
 }
 
-export async function fetchSystemHealth(): Promise<SystemHealth> {
-  const response = await api.get<SystemHealth>("/system/health");
-  return response.data;
+export async function fetchSystem(): Promise<SystemHealth> {
+  try {
+    const response = await api.get<SystemHealth>("/system");
+    return response.data;
+  } catch (_error) {
+    const fallback = await api.get<SystemHealth>("/system/health");
+    return fallback.data;
+  }
 }
 
 export async function fetchSystemNetwork(): Promise<NetworkSettings> {

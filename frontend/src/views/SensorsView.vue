@@ -37,5 +37,12 @@ onMounted(async () => {
     </header>
 
     <SensorTable :sensors="rows" />
+
+    <p
+      v-if="sensorsStore.error"
+      class="text-sm text-fm-muted"
+    >
+      Sensor API unavailable. Keeping last known data.
+    </p>
   </section>
 </template>

@@ -7,11 +7,13 @@ import { useAlarmsStore } from "@/stores/alarms";
 import { useDevicesStore } from "@/stores/devices";
 import { useMeasurementsStore } from "@/stores/measurements";
 import { useSensorsStore } from "@/stores/sensors";
+import { useSystemStore } from "@/stores/system";
 
 const devicesStore = useDevicesStore();
 const sensorsStore = useSensorsStore();
 const measurementsStore = useMeasurementsStore();
 const alarmsStore = useAlarmsStore();
+const systemStore = useSystemStore();
 
 const sensorById = computed(() => new Map(sensorsStore.items.map((sensor) => [sensor.id, sensor])));
 const deviceById = computed(() => new Map(devicesStore.items.map((device) => [device.id, device])));
@@ -33,7 +35,7 @@ const latestCards = computed(() =>
 
 onMounted(async () => {
   try {
-    await Promise.all([devicesStore.load(), sensorsStore.load(), measurementsStore.load()]);
+    await Promise.all([systemStore.load(), devicesStore.load(), sensorsStore.load(), measurementsStore.load()]);
   } catch (error) {
     console.error("Failed to load dashboard", error);
   }
@@ -52,6 +54,14 @@ onMounted(async () => {
     </header>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <StatusCard
+        label="System Status"
+        :value="systemStore.health?.status || 'N/A'"
+      />
+      <StatusCard
+        label="Backend Version"
+        :value="systemStore.health?.version || 'N/A'"
+      />
       <StatusCard
         label="Devices"
         :value="devicesStore.items.length"
@@ -79,6 +89,12 @@ onMounted(async () => {
         :value="item.value"
         :timestamp="item.timestamp"
       />
+      <article
+        v-if="measurementsStore.error"
+        class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
+      >
+        Measurements unavailable (REST). Showing live data when available.
+      </article>
     </div>
   </section>
 </template>
