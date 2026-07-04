@@ -8,7 +8,6 @@ sys.path.insert(0, os.path.join(os.getcwd(), "backend"))
 import pytest
 
 from app.database import Base, engine, SessionLocal
-import app.models.measurement as _m  # ensure relationships are registered
 from app.models.device import Device
 from app.models.sensor import Sensor
 from app.services import device_manager
@@ -22,7 +21,8 @@ class FakeMsg:
 
 @pytest.fixture(autouse=True)
 def prepare_db():
-    # create tables and ensure a clean state for tests
+    # recreate schema to ensure columns from models are present
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
     # cleanup rows used by tests

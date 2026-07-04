@@ -1,4 +1,6 @@
-import logging, sys
+import logging
+import sys
+
 from app.config import settings
 
 def setup_logger():

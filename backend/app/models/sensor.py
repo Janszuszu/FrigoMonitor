@@ -18,6 +18,8 @@ class Sensor(Base):
     correction = Column(Float, default=0.0)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_value = Column(Float, nullable=True, index=False)
+    last_measurement = Column(DateTime(timezone=True), nullable=True, index=True)
 
     # Relationships
     device = relationship("Device", back_populates="sensors")
