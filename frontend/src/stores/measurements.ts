@@ -6,14 +6,12 @@ import { FrigoWebSocket } from "@/services/websocket";
 import { useAlarmsStore } from "@/stores/alarms";
 import { useDevicesStore } from "@/stores/devices";
 import { useSensorsStore } from "@/stores/sensors";
-import { useSystemStore } from "@/stores/system";
 import type { LiveEvent, Measurement } from "@/types";
 
 export const useMeasurementsStore = defineStore("measurements", () => {
   const devicesStore = useDevicesStore();
   const sensorsStore = useSensorsStore();
   const alarmsStore = useAlarmsStore();
-  const systemStore = useSystemStore();
 
   const items = ref<Measurement[]>([]);
   const loading = ref(false);
@@ -75,11 +73,6 @@ export const useMeasurementsStore = defineStore("measurements", () => {
       } else {
         alarmsStore.activateFromLive(payload, event.timestamp || null);
       }
-      return;
-    }
-
-    if (eventName === "system.updated") {
-      systemStore.patchFromLive(event.payload || null);
       return;
     }
 

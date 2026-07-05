@@ -12,5 +12,16 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: false,
+    proxy: {
+      "/api": {
+        target: process.env.VITE_BACKEND_PROXY_TARGET || "http://backend:8000",
+        changeOrigin: true,
+      },
+      "/ws": {
+        target: process.env.VITE_BACKEND_PROXY_TARGET || "http://backend:8000",
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
 });

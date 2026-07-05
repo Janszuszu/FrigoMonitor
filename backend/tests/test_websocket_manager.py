@@ -15,7 +15,7 @@ from app.core.event_bus import (
 )
 from main import app
 from app.ws import websocket_manager as ws_module
-from app.ws.websocket_manager import WebSocketManager
+from app.ws.websocket_manager import ConnectionManager
 
 
 class FakeWebSocket:
@@ -40,7 +40,7 @@ class FakeWebSocket:
 @pytest.fixture
 def manager_and_bus(monkeypatch):
     bus = EventBus()
-    manager = WebSocketManager(bus=bus, heartbeat_interval=0.05)
+    manager = ConnectionManager(bus=bus, heartbeat_interval=0.05)
     monkeypatch.setattr(ws_module, "manager", manager)
     return manager, bus
 

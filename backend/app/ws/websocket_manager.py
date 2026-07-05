@@ -14,8 +14,6 @@ from app.core.event_bus import (
     EVENT_SENSOR_UPDATE,
     EVENT_MEASUREMENT_UPDATE,
     EVENT_ALARM_UPDATE,
-    EVENT_NOTIFICATION_CREATED,
-    EVENT_NOTIFICATION_SENT,
     Event,
     EventBus,
     event_bus,
@@ -25,8 +23,6 @@ from app.logger import logger
 SUPPORTED_WS_EVENTS = {
     EVENT_MEASUREMENT_UPDATE,
     EVENT_ALARM_UPDATE,
-    EVENT_NOTIFICATION_CREATED,
-    EVENT_NOTIFICATION_SENT,
     EVENT_DEVICE_UPDATE,
     EVENT_SENSOR_UPDATE,
 }
@@ -40,7 +36,7 @@ class _ClientState:
     heartbeat_task: asyncio.Task[None] | None = None
 
 
-class WebSocketManager:
+class ConnectionManager:
     def __init__(self, bus: EventBus | None = None, heartbeat_interval: float = 30.0) -> None:
         self._bus = bus or event_bus
         self.heartbeat_interval = heartbeat_interval
@@ -170,7 +166,7 @@ class WebSocketManager:
             "payload": event.payload,
         }
 
-manager = WebSocketManager()
+manager = ConnectionManager()
 
 
 @router.websocket("/ws")
