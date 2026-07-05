@@ -13,6 +13,7 @@ import json
 from datetime import datetime, UTC
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -249,13 +250,34 @@ class DeviceManager:
         data: dict,
         now: datetime,
     ) -> tuple[Optional[Sensor], bool, bool]:
-        rom = str(data.get("rom"))
-        sensor = (
-            session.query(Sensor)
-            .filter(Sensor.device_id == device.id)
-            .filter(Sensor.rom == rom)
-            .one_or_none()
-        )
+        rom_raw = data.get("rom")
+        rom = str(rom_raw).strip() if rom_raw not in (None, "") else None
+
+        sensor_id_raw = data.get("sensor_id")
+        sensor_id = str(sensor_id_raw).strip() if sensor_id_raw not in (None, "") else None
+
+        name_raw = data.get("name")
+        sensor_name = str(name_raw).strip() if name_raw not in (None, "") else None
+        if sensor_name is None and sensor_id is not None:
+            sensor_name = sensor_id
+
+        match_filters = []
+        if rom:
+            match_filters.append(Sensor.rom == rom)
+        if sensor_id:
+            match_filters.append(Sensor.sensor_id == sensor_id)
+        if sensor_name:
+            match_filters.append(Sensor.name == sensor_name)
+
+        sensor = None
+        if match_filters:
+            sensor = (
+                session.query(Sensor)
+                .filter(Sensor.device_id == device.id)
+                .filter(or_(*match_filters))
+                .order_by(Sensor.id.asc())
+                .first()
+            )
 
         created = False
         duplicate = False
@@ -263,8 +285,8 @@ class DeviceManager:
         if sensor is None:
             sensor = Sensor(
                 device_id=device.id,
-                name=str(data.get("name") or data.get("sensor_id") or rom),
-                sensor_id=str(data.get("sensor_id") or ""),
+                name=str(data.get("name") or data.get("sensor_id") or rom or "sensor"),
+                sensor_id=sensor_id,
                 sensor_type=str(data.get("type") or "DS18B20"),
                 unit=str(data.get("unit") or "C"),
                 rom=rom,
@@ -274,8 +296,8 @@ class DeviceManager:
         else:
             changed = False
 
-            if "sensor_id" in data and data.get("sensor_id") is not None:
-                value = str(data.get("sensor_id"))
+            if sensor_id is not None:
+                value = sensor_id
                 if sensor.sensor_id != value:
                     sensor.sensor_id = value
                     changed = True
@@ -285,6 +307,10 @@ class DeviceManager:
                 if sensor.name != value:
                     sensor.name = value
                     changed = True
+
+            if rom is not None and sensor.rom != rom:
+                sensor.rom = rom
+                changed = True
 
             if "unit" in data and data.get("unit") is not None:
                 value = str(data.get("unit"))
@@ -348,7 +374,14 @@ class DeviceManager:
         sensor = (
             session.query(Sensor)
             .filter(Sensor.device_id == device.id)
-            .filter(Sensor.name == name)
+            .filter(
+                or_(
+                    Sensor.name == name,
+                    Sensor.sensor_id == name,
+                    Sensor.rom == name,
+                )
+            )
+            .order_by(Sensor.id.asc())
             .one_or_none()
         )
         if sensor:

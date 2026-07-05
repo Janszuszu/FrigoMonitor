@@ -142,3 +142,39 @@ def test_sensor_name_changes_updates_sensor():
         device = s.query(Device).filter(Device.device_id == "ESP-005").one()
         sensor = s.query(Sensor).filter(Sensor.device_id == device.id, Sensor.rom == "28FFBB").one()
         assert sensor.name == "ambient-new"
+
+
+def test_sensor_register_updates_existing_sensor_without_rom():
+    device_topic = "frigomonitor/device/ESP-006/register"
+    sensor_topic = "frigomonitor/device/ESP-006/sensor/register"
+
+    _send(device_topic, {"device_id": "ESP-006", "firmware": "1.0.0"})
+
+    # Simulate a pre-existing sensor row created by older flow without ROM.
+    _send(
+        "devices/ESP-006/sensors/ESP-006:28FFCC",
+        {
+            "serial_number": "ESP-006",
+            "sensor_name": "ESP-006:28FFCC",
+            "sensor_id": "ESP-006:28FFCC",
+        },
+    )
+
+    # Proper sensor/register should update the same row instead of creating a duplicate.
+    _send(
+        sensor_topic,
+        {
+            "device_id": "ESP-006",
+            "sensor_id": "ESP-006:28FFCC",
+            "rom": "28FFCC",
+            "type": "DS18B20",
+            "unit": "C",
+        },
+    )
+
+    with SessionLocal() as s:
+        device = s.query(Device).filter(Device.device_id == "ESP-006").one()
+        sensors = s.query(Sensor).filter(Sensor.device_id == device.id).all()
+        assert len(sensors) == 1
+        assert sensors[0].rom == "28FFCC"
+        assert sensors[0].sensor_id == "ESP-006:28FFCC"

@@ -3,6 +3,7 @@ import { computed, onMounted } from "vue";
 
 import DeviceTable from "@/components/DeviceTable.vue";
 import { useDevicesStore } from "@/stores/devices";
+import { parseApiTimestampMillis } from "@/utils/time";
 
 const devicesStore = useDevicesStore();
 
@@ -10,10 +11,11 @@ const onlineIds = computed(() => {
   const now = Date.now();
   const set = new Set<number>();
   for (const item of devicesStore.items) {
-    if (!item.last_seen) {
+    const lastSeenMs = parseApiTimestampMillis(item.last_seen);
+    if (lastSeenMs === null) {
       continue;
     }
-    if (now - new Date(item.last_seen).getTime() < 5 * 60 * 1000) {
+    if (now - lastSeenMs < 5 * 60 * 1000) {
       set.add(item.id);
     }
   }

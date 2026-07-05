@@ -9,6 +9,7 @@ class Sensor(Base):
     __tablename__ = "sensors"
     __table_args__ = (
         UniqueConstraint("device_id", "rom", name="uq_sensor_device_rom"),
+        UniqueConstraint("device_id", "sensor_id", name="uq_sensor_device_sensor_id"),
     )
 
     id = Column(Integer, primary_key=True, index=True)

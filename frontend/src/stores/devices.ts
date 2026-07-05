@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 
 import { fetchDevices } from "@/services/api";
 import type { Device } from "@/types";
+import { parseApiTimestampMillis } from "@/utils/time";
 
 const ONLINE_WINDOW_MS = 5 * 60 * 1000;
 
@@ -14,10 +15,11 @@ export const useDevicesStore = defineStore("devices", () => {
   const onlineCount = computed(() => {
     const now = Date.now();
     return items.value.filter((device) => {
-      if (!device.last_seen) {
+      const lastSeenMs = parseApiTimestampMillis(device.last_seen);
+      if (lastSeenMs === null) {
         return false;
       }
-      return now - new Date(device.last_seen).getTime() < ONLINE_WINDOW_MS;
+      return now - lastSeenMs < ONLINE_WINDOW_MS;
     }).length;
   });
 
@@ -44,17 +46,46 @@ export const useDevicesStore = defineStore("devices", () => {
     }
 
     const index = items.value.findIndex((item) => item.id === id);
+    const current = index >= 0 ? items.value[index] : null;
+
     const next: Device = {
       id,
-      name: String(payload.name || "Unknown device"),
-      serial_number: payload.serial_number ? String(payload.serial_number) : null,
-      device_id: payload.device_id ? String(payload.device_id) : null,
-      location: payload.location ? String(payload.location) : null,
-      created_at: payload.created_at ? String(payload.created_at) : null,
-      last_seen: payload.last_seen ? String(payload.last_seen) : null,
-      firmware: payload.firmware ? String(payload.firmware) : null,
-      ip: payload.ip ? String(payload.ip) : null,
-      status: payload.status ? String(payload.status) : null,
+      name:
+        payload.name !== undefined
+          ? String(payload.name)
+          : current?.name || "Unknown device",
+      serial_number:
+        payload.serial_number !== undefined
+          ? (payload.serial_number ? String(payload.serial_number) : null)
+          : current?.serial_number || null,
+      device_id:
+        payload.device_id !== undefined
+          ? (payload.device_id ? String(payload.device_id) : null)
+          : current?.device_id || null,
+      location:
+        payload.location !== undefined
+          ? (payload.location ? String(payload.location) : null)
+          : current?.location || null,
+      created_at:
+        payload.created_at !== undefined
+          ? (payload.created_at ? String(payload.created_at) : null)
+          : current?.created_at || null,
+      last_seen:
+        payload.last_seen !== undefined
+          ? (payload.last_seen ? String(payload.last_seen) : null)
+          : current?.last_seen || null,
+      firmware:
+        payload.firmware !== undefined
+          ? (payload.firmware ? String(payload.firmware) : null)
+          : current?.firmware || null,
+      ip:
+        payload.ip !== undefined
+          ? (payload.ip ? String(payload.ip) : null)
+          : current?.ip || null,
+      status:
+        payload.status !== undefined
+          ? (payload.status ? String(payload.status) : null)
+          : current?.status || null,
     };
 
     if (index >= 0) {

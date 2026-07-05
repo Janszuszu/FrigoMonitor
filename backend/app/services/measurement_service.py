@@ -58,7 +58,7 @@ class MeasurementService:
                     return False
 
                 # find or create sensor
-                sensor = (
+                sensor_candidates = (
                     session.query(Sensor)
                     .filter(Sensor.device_id == device.id)
                     .filter(
@@ -68,13 +68,26 @@ class MeasurementService:
                             Sensor.rom == sensor_name,
                         )
                     )
-                    .one_or_none()
+                    .order_by(Sensor.id.desc())
+                    .all()
                 )
-                if sensor is None:
+
+                if not sensor_candidates:
                     sensor = Sensor(device_id=device.id, name=sensor_name, sensor_id=sensor_name)
                     session.add(sensor)
                     session.commit()
                     session.refresh(sensor)
+                else:
+                    # Prefer explicit ROM matches first; if duplicates exist, pick the newest row.
+                    rom_matches = [candidate for candidate in sensor_candidates if candidate.rom == sensor_name]
+                    sensor = rom_matches[0] if rom_matches else sensor_candidates[0]
+                    if len(sensor_candidates) > 1:
+                        logger.warning(
+                            "Multiple sensors matched for device=%s sensor=%s; using sensor_id=%s",
+                            serial_number,
+                            sensor_name,
+                            sensor.id,
+                        )
 
                 # create measurement
                 m = Measurement(sensor_id=sensor.id, measured_at=ts, value=value)
