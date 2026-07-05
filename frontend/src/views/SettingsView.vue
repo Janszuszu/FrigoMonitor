@@ -39,7 +39,7 @@ function save(): void {
         <input
           v-model="form.backendUrl"
           class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 text-fm-text outline-none focus:border-fm-accent"
-          placeholder="http://localhost:8000/api/v1"
+          placeholder="/api/v1"
         >
       </label>
 
@@ -48,7 +48,7 @@ function save(): void {
         <input
           v-model="form.websocketUrl"
           class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 text-fm-text outline-none focus:border-fm-accent"
-          placeholder="ws://localhost:8000/ws"
+          placeholder="/ws"
         >
       </label>
 

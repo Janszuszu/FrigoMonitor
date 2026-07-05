@@ -52,28 +52,29 @@ export const useMeasurementsStore = defineStore("measurements", () => {
       return;
     }
 
-    if (eventName === "measurement.saved") {
+    if (eventName === "measurement_update") {
       handleMeasurementSaved(event);
       return;
     }
 
-    if (eventName === "device.updated") {
+    if (eventName === "device_update") {
       devicesStore.upsertFromLive(event.payload || null);
       return;
     }
 
-    if (eventName === "sensor.updated") {
+    if (eventName === "sensor_update") {
       sensorsStore.upsertFromLive(event.payload || null);
       return;
     }
 
-    if (eventName === "alarm.active") {
-      alarmsStore.activateFromLive(event.payload || null, event.timestamp || null);
-      return;
-    }
-
-    if (eventName === "alarm.cleared") {
-      alarmsStore.clearFromLive(event.payload || null);
+    if (eventName === "alarm_update") {
+      const payload = (event.payload || {}) as Record<string, unknown>;
+      const state = String(payload.state || "").toLowerCase();
+      if (state.includes("cleared")) {
+        alarmsStore.clearFromLive(payload);
+      } else {
+        alarmsStore.activateFromLive(payload, event.timestamp || null);
+      }
       return;
     }
 

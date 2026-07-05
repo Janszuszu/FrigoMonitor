@@ -8,8 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.event_bus import (
-    EVENT_ALARM_ACTIVE,
-    EVENT_MEASUREMENT_SAVED,
+    EVENT_ALARM_UPDATE,
+    EVENT_MEASUREMENT_UPDATE,
     Event,
     EventBus,
 )
@@ -68,7 +68,7 @@ def test_broadcast(manager_and_bus):
         await manager.connect(second)
         await manager.broadcast(
             Event(
-                event_type=EVENT_MEASUREMENT_SAVED,
+                event_type=EVENT_MEASUREMENT_UPDATE,
                 source="test",
                 payload={"value": 2.5},
             )
@@ -78,7 +78,7 @@ def test_broadcast(manager_and_bus):
 
     asyncio.run(run_broadcast())
 
-    assert first.messages[0]["event"] == EVENT_MEASUREMENT_SAVED
+    assert first.messages[0]["event"] == EVENT_MEASUREMENT_UPDATE
     assert second.messages[0]["payload"]["value"] == 2.5
 
 
@@ -87,14 +87,14 @@ def test_multiple_clients_receive_event(client, manager_and_bus):
     with client.websocket_connect("/ws") as first, client.websocket_connect("/ws") as second:
         bus.publish(
             Event(
-                event_type=EVENT_ALARM_ACTIVE,
+                event_type=EVENT_ALARM_UPDATE,
                 source="AlarmService",
                 payload={"message": "alarm active"},
             )
         )
 
-        assert first.receive_json()["event"] == EVENT_ALARM_ACTIVE
-        assert second.receive_json()["event"] == EVENT_ALARM_ACTIVE
+        assert first.receive_json()["event"] == EVENT_ALARM_UPDATE
+        assert second.receive_json()["event"] == EVENT_ALARM_UPDATE
 
 
 def test_event_forwarding(client, manager_and_bus):
@@ -102,14 +102,14 @@ def test_event_forwarding(client, manager_and_bus):
     with client.websocket_connect("/ws") as websocket:
         bus.publish(
             Event(
-                event_type=EVENT_MEASUREMENT_SAVED,
+                event_type=EVENT_MEASUREMENT_UPDATE,
                 source="MeasurementService",
                 payload={"sensor_id": 1, "value": 4.2},
             )
         )
 
         message = websocket.receive_json()
-        assert message["event"] == EVENT_MEASUREMENT_SAVED
+        assert message["event"] == EVENT_MEASUREMENT_UPDATE
         assert message["payload"]["sensor_id"] == 1
 
 

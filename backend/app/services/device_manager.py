@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import SessionLocal
+from app.core.event_bus import EVENT_DEVICE_UPDATE, EVENT_SENSOR_UPDATE, Event, event_bus
 from app.logger import logger
 from app.services.mqtt_service import mqtt_service
 from app.models.device import Device
@@ -124,9 +125,11 @@ class DeviceManager:
                         fallback = sensor_payload.get("sensor_id") or sensor_payload.get("name")
                         if fallback:
                             sensor_payload["rom"] = str(fallback)
-                    self._upsert_sensor_registration(session, device, sensor_payload, now)
+                    sensor, _, _ = self._upsert_sensor_registration(session, device, sensor_payload, now)
+                    self._publish_sensor_update(device, sensor)
 
                 session.commit()
+                self._publish_device_update(device)
         except SQLAlchemyError:
             logger.error("Database error")
 
@@ -158,6 +161,8 @@ class DeviceManager:
                 else:
                     logger.info("Device updated")
 
+                self._publish_device_update(device)
+
                 if duplicate:
                     logger.warning("Duplicate registration ignored")
         except SQLAlchemyError:
@@ -182,6 +187,9 @@ class DeviceManager:
                     logger.info("Sensor created")
                 else:
                     logger.info("Sensor updated")
+
+                self._publish_device_update(device)
+                self._publish_sensor_update(device, sensor)
 
                 if duplicate:
                     logger.warning("Duplicate registration ignored")
@@ -359,9 +367,55 @@ class DeviceManager:
             session.query(Device).filter(Device.id == device.id).update({"last_seen": datetime.now(UTC)})
             session.commit()
             logger.debug(f"Updated last_seen for device id={device.id}")
+            session.refresh(device)
+            self._publish_device_update(device)
         except Exception:
             session.rollback()
             logger.exception("Failed to update last_seen for device")
+
+    def _publish_device_update(self, device: Device) -> None:
+        try:
+            event_bus.publish(
+                Event(
+                    event_type=EVENT_DEVICE_UPDATE,
+                    source="DeviceManager",
+                    payload={
+                        "id": device.id,
+                        "name": device.name,
+                        "serial_number": device.serial_number,
+                        "device_id": device.device_id,
+                        "last_seen": device.last_seen.isoformat() if device.last_seen else None,
+                        "firmware": device.firmware,
+                        "ip": device.ip,
+                    },
+                )
+            )
+        except Exception:
+            logger.exception("Failed to publish device update")
+
+    def _publish_sensor_update(self, device: Device, sensor: Sensor) -> None:
+        try:
+            event_bus.publish(
+                Event(
+                    event_type=EVENT_SENSOR_UPDATE,
+                    source="DeviceManager",
+                    payload={
+                        "id": sensor.id,
+                        "device_id": device.id,
+                        "sensor_id": sensor.sensor_id,
+                        "name": sensor.name,
+                        "sensor_type": sensor.sensor_type,
+                        "rom": sensor.rom,
+                        "unit": sensor.unit,
+                        "alarm_state": sensor.alarm_state,
+                        "alarm_level": sensor.alarm_level,
+                        "last_value": sensor.last_value,
+                        "last_measurement": sensor.last_measurement.isoformat() if sensor.last_measurement else None,
+                    },
+                )
+            )
+        except Exception:
+            logger.exception("Failed to publish sensor update")
 
 
 # module-level manager instance

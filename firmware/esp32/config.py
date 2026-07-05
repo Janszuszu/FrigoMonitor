@@ -8,14 +8,14 @@ from constants import (
 )
 
 # Device
-DEVICE_ID = "esp32c3-supermini-001"
+DEVICE_ID = "esptesst-001"
 
 # WiFi
-WIFI_SSID = ""
-WIFI_PASSWORD = ""
+WIFI_SSID = "Orange_Swiatlowod_8AB2_2.4GHz"
+WIFI_PASSWORD = "ASYNNVH5YU3L"
 
 # MQTT
-MQTT_HOST = "127.0.0.1"
+MQTT_HOST = "192.168.1.51"
 MQTT_PORT = 1883
 MQTT_USER = ""
 MQTT_PASSWORD = ""

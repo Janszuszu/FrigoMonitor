@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import or_
 
 from app.database import SessionLocal
-from app.core.event_bus import EVENT_MEASUREMENT_SAVED, Event, event_bus
+from app.core.event_bus import EVENT_MEASUREMENT_UPDATE, EVENT_SENSOR_UPDATE, Event, event_bus
 from app.logger import logger
 from app.models.device import Device
 from app.models.sensor import Sensor
@@ -99,7 +99,7 @@ class MeasurementService:
             try:
                 event_bus.publish(
                     Event(
-                        event_type=EVENT_MEASUREMENT_SAVED,
+                        event_type=EVENT_MEASUREMENT_UPDATE,
                         source="MeasurementService",
                         payload={
                             "measurement_id": measurement_id,
@@ -108,6 +108,17 @@ class MeasurementService:
                             "sensor_name": sensor_name,
                             "value": value,
                             "timestamp": ts.isoformat(),
+                        },
+                    )
+                )
+                event_bus.publish(
+                    Event(
+                        event_type=EVENT_SENSOR_UPDATE,
+                        source="MeasurementService",
+                        payload={
+                            "id": sensor_id,
+                            "last_value": value,
+                            "last_measurement": ts.isoformat(),
                         },
                     )
                 )

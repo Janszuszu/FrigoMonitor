@@ -6,9 +6,7 @@ from typing import Optional
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.event_bus import (
-    EVENT_ALARM_ACTIVE,
-    EVENT_ALARM_CLEARED,
-    EVENT_ALARM_PENDING,
+    EVENT_ALARM_UPDATE,
     Event,
     event_bus,
 )
@@ -304,18 +302,12 @@ class AlarmService:
         level: Optional[str],
         message: str,
     ) -> None:
-        event_type = {
-            AlarmState.PENDING: EVENT_ALARM_PENDING,
-            AlarmState.ACTIVE: EVENT_ALARM_ACTIVE,
-            AlarmState.CLEARED: EVENT_ALARM_CLEARED,
-        }.get(state)
-
-        if event_type is None:
+        if state not in (AlarmState.PENDING, AlarmState.ACTIVE, AlarmState.CLEARED):
             return
 
         event_bus.publish(
             Event(
-                event_type=event_type,
+                event_type=EVENT_ALARM_UPDATE,
                 source="AlarmService",
                 payload={
                     "device_id": sensor.device_id,

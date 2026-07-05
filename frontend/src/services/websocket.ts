@@ -1,7 +1,8 @@
 import type { LiveEvent } from "@/types";
 
 const WS_STORAGE_KEY = "fm_ws_url";
-const DEFAULT_WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws";
+const DEFAULT_WS_URL = import.meta.env.VITE_WS_URL
+  || `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
 export type MessageHandler = (event: LiveEvent) => void;
 export type StateHandler = (state: "connected" | "connecting" | "disconnected") => void;

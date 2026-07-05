@@ -10,12 +10,10 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.event_bus import (
-    EVENT_ALARM_ACTIVE,
-    EVENT_ALARM_CLEARED,
-    EVENT_ALARM_PENDING,
-    EVENT_DEVICE_OFFLINE,
-    EVENT_DEVICE_ONLINE,
-    EVENT_MEASUREMENT_SAVED,
+    EVENT_DEVICE_UPDATE,
+    EVENT_SENSOR_UPDATE,
+    EVENT_MEASUREMENT_UPDATE,
+    EVENT_ALARM_UPDATE,
     EVENT_NOTIFICATION_CREATED,
     EVENT_NOTIFICATION_SENT,
     Event,
@@ -25,14 +23,12 @@ from app.core.event_bus import (
 from app.logger import logger
 
 SUPPORTED_WS_EVENTS = {
-    EVENT_MEASUREMENT_SAVED,
-    EVENT_ALARM_PENDING,
-    EVENT_ALARM_ACTIVE,
-    EVENT_ALARM_CLEARED,
+    EVENT_MEASUREMENT_UPDATE,
+    EVENT_ALARM_UPDATE,
     EVENT_NOTIFICATION_CREATED,
     EVENT_NOTIFICATION_SENT,
-    EVENT_DEVICE_ONLINE,
-    EVENT_DEVICE_OFFLINE,
+    EVENT_DEVICE_UPDATE,
+    EVENT_SENSOR_UPDATE,
 }
 
 router = APIRouter()
@@ -173,7 +169,6 @@ class WebSocketManager:
             "timestamp": event.timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),
             "payload": event.payload,
         }
-
 
 manager = WebSocketManager()
 

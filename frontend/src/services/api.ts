@@ -2,7 +2,7 @@ import axios from "axios";
 
 import type { Device, Measurement, NetworkSettings, Sensor, SystemHealth } from "@/types";
 
-const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 
 const storageKey = "fm_backend_url";
 
