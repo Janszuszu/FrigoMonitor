@@ -120,12 +120,12 @@ class NT57B08Driver:
                 )
                 continue
 
-            self._measurement_service.save_measurement(
+            if self._measurement_service.save_measurement(
                 self.config.device_serial,
                 self._sensor_uid(channel),
                 converted,
-            )
-            values_stored += 1
+            ):
+                values_stored += 1
 
         logger.info(
             "NT57B08 poll: %d/%d channels stored",
