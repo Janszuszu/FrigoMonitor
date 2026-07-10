@@ -2,6 +2,14 @@ import axios from "axios";
 
 import type { Device, Measurement, NetworkSettings, Sensor, SystemHealth } from "@/types";
 
+export interface MeasurementHistoryParams {
+  sensorId?: number;
+  from?: string;
+  to?: string;
+  limit?: number;
+  targetPoints?: number;
+}
+
 const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 
 const storageKey = "fm_backend_url";
@@ -38,6 +46,29 @@ export async function fetchMeasurements(limit = 100): Promise<Measurement[]> {
     const fallback = await api.get<Measurement[]>(`/measurements/latest?limit=${limit}`);
     return fallback.data;
   }
+}
+
+export async function fetchMeasurementHistory(params: MeasurementHistoryParams): Promise<Measurement[]> {
+  const search = new URLSearchParams();
+
+  if (params.sensorId !== undefined) {
+    search.set("sensor_id", String(params.sensorId));
+  }
+  if (params.from) {
+    search.set("from", params.from);
+  }
+  if (params.to) {
+    search.set("to", params.to);
+  }
+  if (params.limit !== undefined) {
+    search.set("limit", String(params.limit));
+  }
+  if (params.targetPoints !== undefined) {
+    search.set("target_points", String(params.targetPoints));
+  }
+
+  const response = await api.get<Measurement[]>(`/measurements/history?${search.toString()}`);
+  return response.data;
 }
 
 export async function fetchSystem(): Promise<SystemHealth> {

@@ -98,10 +98,13 @@ def test_sensors_endpoints_and_measurements():
         s.commit()
         s.refresh(sensor)
         sensor_id = sensor.id
-        # add measurements
-        m1 = Measurement(sensor_id=sensor_id, measured_at=datetime.now(UTC), value=1.0)
-        m2 = Measurement(sensor_id=sensor_id, measured_at=datetime.now(UTC) + timedelta(seconds=5), value=2.0)
-        s.add_all([m1, m2])
+        # add measurements across multiple timestamps
+        base = datetime.now(UTC)
+        measurements = [
+            Measurement(sensor_id=sensor_id, measured_at=base + timedelta(minutes=i), value=float(i % 7) + 0.5)
+            for i in range(20)
+        ]
+        s.add_all(measurements)
         s.commit()
     
     # sensors list
@@ -142,6 +145,65 @@ def test_sensors_endpoints_and_measurements():
     assert r.status_code == 200
     hist = r.json()
     assert all(m["sensor_id"] == sensor_id for m in hist)
+
+    dt_from = (base + timedelta(minutes=5)).isoformat()
+    dt_to = (base + timedelta(minutes=12)).isoformat()
+    r = client.get(
+        "/api/v1/measurements/history",
+        params={
+            "sensor_id": sensor_id,
+            "from": dt_from,
+            "to": dt_to,
+            "limit": 100,
+        },
+    )
+    assert r.status_code == 200
+    ranged = r.json()
+    assert len(ranged) > 0
+    dt_from_obj = datetime.fromisoformat(dt_from.replace("Z", "+00:00"))
+    dt_to_obj = datetime.fromisoformat(dt_to.replace("Z", "+00:00"))
+
+    if dt_from_obj.tzinfo is None:
+        dt_from_obj = dt_from_obj.replace(tzinfo=UTC)
+    if dt_to_obj.tzinfo is None:
+        dt_to_obj = dt_to_obj.replace(tzinfo=UTC)
+
+    def _as_utc(value: str) -> datetime:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+
+    assert all(
+        dt_from_obj <= _as_utc(item["measured_at"]) <= dt_to_obj
+        for item in ranged
+    )
+
+    r = client.get(
+        "/api/v1/measurements/history",
+        params={
+            "sensor_id": sensor_id,
+            "from": base.isoformat(),
+            "to": (base + timedelta(minutes=19)).isoformat(),
+            "limit": 100,
+            "target_points": 6,
+        },
+    )
+    assert r.status_code == 422
+
+    r = client.get(
+        "/api/v1/measurements/history",
+        params={
+            "sensor_id": sensor_id,
+            "from": base.isoformat(),
+            "to": (base + timedelta(minutes=19)).isoformat(),
+            "limit": 100,
+            "target_points": 100,
+        },
+    )
+    assert r.status_code == 200
+    downsampled = r.json()
+    assert len(downsampled) <= 100
 
 
 def test_network_settings_endpoints():

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 
 import SensorTrendChart from "@/components/SensorTrendChart.vue";
 import StatusCard from "@/components/StatusCard.vue";
+import { fetchMeasurementHistory } from "@/services/api";
 import { useAlarmsStore } from "@/stores/alarms";
 import { useDevicesStore } from "@/stores/devices";
 import { useMeasurementsStore } from "@/stores/measurements";
@@ -18,19 +19,31 @@ const systemStore = useSystemStore();
 const sensorById = computed(() => new Map(sensorsStore.items.map((sensor) => [sensor.id, sensor])));
 const deviceById = computed(() => new Map(devicesStore.items.map((device) => [device.id, device])));
 const selectedSensorId = ref<number | null>(null);
+const selectedRange = ref<"LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "CUSTOM">("LIVE");
+const customFrom = ref("");
+const customTo = ref("");
+const trendLoading = ref(false);
+const trendError = ref<string | null>(null);
+const historyPoints = ref<{ timestamp: string; value: number }[]>([]);
+
+const LIVE_WINDOW_MS = 60 * 60 * 1000;
+
+const rangeOptions: { key: "LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "CUSTOM"; label: string }[] = [
+  { key: "LIVE", label: "LIVE" },
+  { key: "1h", label: "1h" },
+  { key: "6h", label: "6h" },
+  { key: "24h", label: "24h" },
+  { key: "72h", label: "72h" },
+  { key: "7d", label: "7d" },
+  { key: "CUSTOM", label: "Custom" },
+];
 
 const sensorOptions = computed(() => {
-  const ids = new Set<number>();
-  for (const item of measurementsStore.items) {
-    ids.add(item.sensor_id);
-  }
-
-  return Array.from(ids).map((sensorId) => {
-    const sensor = sensorById.value.get(sensorId);
-    const device = sensor ? deviceById.value.get(sensor.device_id) : null;
+  return sensorsStore.items.map((sensor) => {
+    const device = deviceById.value.get(sensor.device_id);
     return {
-      id: sensorId,
-      label: `${device?.name || "Unknown device"} - ${sensor?.name || `Sensor ${sensorId}`}`,
+      id: sensor.id,
+      label: `${device?.name || "Unknown device"} - ${sensor.name || `Sensor ${sensor.id}`}`,
     };
   });
 });
@@ -51,24 +64,125 @@ watch(
   { immediate: true },
 );
 
-const trendPoints = computed(() => {
+const selectedSensorLabel = computed(() => {
+  return sensorOptions.value.find((option) => option.id === selectedSensorId.value)?.label || "No sensor selected";
+});
+
+const isLive = computed(() => selectedRange.value === "LIVE");
+
+const livePoints = computed(() => {
   if (selectedSensorId.value === null) {
     return [];
   }
 
+  const cutoff = Date.now() - LIVE_WINDOW_MS;
+
   return measurementsStore.items
     .filter((item) => item.sensor_id === selectedSensorId.value)
-    .slice(0, 30)
-    .reverse()
+    .filter((item) => {
+      const ts = new Date(item.measured_at).getTime();
+      return Number.isFinite(ts) && ts >= cutoff;
+    })
+    .slice()
+    .sort((a, b) => new Date(a.measured_at).getTime() - new Date(b.measured_at).getTime())
     .map((item) => ({
       timestamp: item.measured_at,
       value: item.value,
     }));
 });
 
+const trendPoints = computed(() => (isLive.value ? livePoints.value : historyPoints.value));
+
+function localDateTimeToIso(value: string): string | null {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString();
+}
+
+function buildPresetRange(range: "1h" | "6h" | "24h" | "72h" | "7d"): { from: string; to: string } {
+  const to = new Date();
+  const from = new Date(to);
+  if (range === "1h") {
+    from.setHours(from.getHours() - 1);
+  } else if (range === "6h") {
+    from.setHours(from.getHours() - 6);
+  } else if (range === "24h") {
+    from.setHours(from.getHours() - 24);
+  } else if (range === "72h") {
+    from.setHours(from.getHours() - 72);
+  } else {
+    from.setDate(from.getDate() - 7);
+  }
+  return { from: from.toISOString(), to: to.toISOString() };
+}
+
+async function loadTrendHistory(): Promise<void> {
+  if (selectedSensorId.value === null || isLive.value) {
+    historyPoints.value = [];
+    trendError.value = null;
+    return;
+  }
+
+  let from: string | null = null;
+  let to: string | null = null;
+
+  if (selectedRange.value === "CUSTOM") {
+    from = localDateTimeToIso(customFrom.value);
+    to = localDateTimeToIso(customTo.value);
+    if (!from || !to) {
+      historyPoints.value = [];
+      trendError.value = "Set a valid custom date/time range.";
+      return;
+    }
+    if (new Date(from).getTime() > new Date(to).getTime()) {
+      historyPoints.value = [];
+      trendError.value = "Custom range is invalid: FROM must be earlier than TO.";
+      return;
+    }
+  } else {
+    const preset = buildPresetRange(selectedRange.value);
+    from = preset.from;
+    to = preset.to;
+  }
+
+  trendLoading.value = true;
+  trendError.value = null;
+  try {
+    const result = await fetchMeasurementHistory({
+      sensorId: selectedSensorId.value,
+      from,
+      to,
+      limit: 50000,
+      targetPoints: 1600,
+    });
+    historyPoints.value = result.map((item) => ({
+      timestamp: item.measured_at,
+      value: item.value,
+    }));
+  } catch (error) {
+    historyPoints.value = [];
+    trendError.value = error instanceof Error ? error.message : "Failed to load sensor trend history";
+  } finally {
+    trendLoading.value = false;
+  }
+}
+
+watch(
+  [selectedSensorId, selectedRange, customFrom, customTo],
+  () => {
+    void loadTrendHistory();
+  },
+);
+
 onMounted(async () => {
   try {
     await Promise.all([systemStore.load(), devicesStore.load(), sensorsStore.load(), measurementsStore.load()]);
+    await loadTrendHistory();
   } catch (error) {
     console.error("Failed to load dashboard", error);
   }
@@ -136,29 +250,81 @@ onMounted(async () => {
         </label>
       </div>
 
+      <div class="rounded-xl border border-slate-800 bg-fm-panelSoft/70 p-3">
+        <div class="mb-2 text-xs uppercase tracking-[0.12em] text-fm-muted">
+          Selected Sensor: <span class="text-fm-text">{{ selectedSensorLabel }}</span>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            v-for="option in rangeOptions"
+            :key="option.key"
+            type="button"
+            class="rounded-md border px-3 py-1.5 text-xs font-semibold transition"
+            :class="selectedRange === option.key
+              ? 'border-fm-accent bg-fm-accent/20 text-fm-text'
+              : 'border-slate-700 bg-slate-900 text-fm-muted hover:border-slate-500 hover:text-fm-text'"
+            @click="selectedRange = option.key"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+
+        <div
+          v-if="selectedRange === 'CUSTOM'"
+          class="mt-3 grid gap-2 md:grid-cols-2"
+        >
+          <label class="text-xs text-fm-muted">
+            FROM
+            <input
+              v-model="customFrom"
+              type="datetime-local"
+              class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-fm-text"
+            >
+          </label>
+          <label class="text-xs text-fm-muted">
+            TO
+            <input
+              v-model="customTo"
+              type="datetime-local"
+              class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-fm-text"
+            >
+          </label>
+        </div>
+      </div>
+
       <SensorTrendChart
         v-if="trendPoints.length"
         :points="trendPoints"
+        :live-mode="isLive"
+        :sensor-label="selectedSensorLabel"
       />
 
       <article
-        v-else
+        v-else-if="!trendLoading"
         class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
       >
         No measurements available yet for the selected sensor.
       </article>
 
       <article
-        v-if="measurementsStore.error"
+        v-if="trendLoading"
         class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
       >
-        Measurements unavailable (REST). Showing live data when available.
+        Loading trend data...
+      </article>
+
+      <article
+        v-if="measurementsStore.error || trendError"
+        class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
+      >
+        {{ trendError || "Measurements unavailable (REST). Showing live data when available." }}
       </article>
     </section>
 
     <div class="grid gap-4 lg:grid-cols-2">
       <article class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted">
-        Source: {{ sensorOptions.find((option) => option.id === selectedSensorId)?.label || "No sensor selected" }}
+        Source: {{ selectedSensorLabel }}
       </article>
       <article class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted">
         Samples in chart: {{ trendPoints.length }}

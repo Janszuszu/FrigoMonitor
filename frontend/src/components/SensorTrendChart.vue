@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 
 type ChartPoint = {
   timestamp: string;
@@ -10,23 +10,176 @@ const props = withDefaults(
   defineProps<{
     points: ChartPoint[];
     height?: number;
+    liveMode?: boolean;
+    sensorLabel?: string;
   }>(),
   {
-    height: 280,
+    height: 300,
+    liveMode: false,
+    sensorLabel: "",
   },
 );
 
-const padding = 28;
-const width = 900;
+type ParsedPoint = {
+  t: number;
+  timestamp: string;
+  value: number;
+};
 
-const minMax = computed(() => {
-  if (props.points.length === 0) {
+const padding = 32;
+const width = 960;
+const MAX_RENDER_POINTS = 1200;
+const MIN_ZOOM_SPAN_MS = 30 * 1000;
+
+const svgRef = ref<SVGSVGElement | null>(null);
+const viewFrom = ref<number | null>(null);
+const viewTo = ref<number | null>(null);
+
+const hoverState = ref<{ x: number; y: number; point: ParsedPoint } | null>(null);
+const isDragging = ref(false);
+const dragStartX = ref(0);
+const dragStartFrom = ref(0);
+const dragStartTo = ref(0);
+
+const parsedPoints = computed<ParsedPoint[]>(() => {
+  const valid = props.points
+    .map((point) => ({
+      t: new Date(point.timestamp).getTime(),
+      timestamp: point.timestamp,
+      value: point.value,
+    }))
+    .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.value));
+
+  valid.sort((a, b) => a.t - b.t);
+  return valid;
+});
+
+const fullDomain = computed(() => {
+  if (parsedPoints.value.length === 0) {
     return null;
   }
 
-  let min = props.points[0].value;
-  let max = props.points[0].value;
-  for (const point of props.points) {
+  let minV = parsedPoints.value[0].value;
+  let maxV = parsedPoints.value[0].value;
+
+  for (const point of parsedPoints.value) {
+    if (point.value < minV) {
+      minV = point.value;
+    }
+    if (point.value > maxV) {
+      maxV = point.value;
+    }
+  }
+
+  if (minV === maxV) {
+    minV -= 0.2;
+    maxV += 0.2;
+  }
+
+  const from = parsedPoints.value[0].t;
+  const to = parsedPoints.value[parsedPoints.value.length - 1].t;
+  return { from, to, minV, maxV };
+});
+
+const isZoomed = computed(() => {
+  if (!fullDomain.value || viewFrom.value === null || viewTo.value === null) {
+    return false;
+  }
+  return viewFrom.value > fullDomain.value.from || viewTo.value < fullDomain.value.to;
+});
+
+watch(
+  [parsedPoints, () => props.liveMode],
+  () => {
+    if (!fullDomain.value) {
+      viewFrom.value = null;
+      viewTo.value = null;
+      hoverState.value = null;
+      return;
+    }
+
+    if (!isZoomed.value || props.liveMode) {
+      viewFrom.value = fullDomain.value.from;
+      viewTo.value = fullDomain.value.to;
+    }
+  },
+  { immediate: true },
+);
+
+const activeDomain = computed(() => {
+  if (!fullDomain.value) {
+    return null;
+  }
+
+  if (viewFrom.value === null || viewTo.value === null) {
+    return { from: fullDomain.value.from, to: fullDomain.value.to };
+  }
+
+  const from = Math.max(fullDomain.value.from, Math.min(viewFrom.value, fullDomain.value.to));
+  const to = Math.min(fullDomain.value.to, Math.max(viewTo.value, fullDomain.value.from));
+  return { from, to };
+});
+
+const visiblePoints = computed(() => {
+  if (!activeDomain.value) {
+    return [] as ParsedPoint[];
+  }
+
+  return parsedPoints.value.filter((point) => point.t >= activeDomain.value!.from && point.t <= activeDomain.value!.to);
+});
+
+function downsampleMinMax(points: ParsedPoint[], targetPoints: number): ParsedPoint[] {
+  if (points.length <= targetPoints) {
+    return points;
+  }
+
+  const bucketCount = Math.max(1, Math.floor(targetPoints / 2));
+  const bucketSize = Math.max(1, Math.ceil(points.length / bucketCount));
+  const sampled: ParsedPoint[] = [];
+
+  for (let start = 0; start < points.length; start += bucketSize) {
+    const bucket = points.slice(start, start + bucketSize);
+    if (!bucket.length) {
+      continue;
+    }
+
+    if (bucket.length === 1) {
+      sampled.push(bucket[0]);
+      continue;
+    }
+
+    let min = bucket[0];
+    let max = bucket[0];
+    for (const point of bucket) {
+      if (point.value < min.value) {
+        min = point;
+      }
+      if (point.value > max.value) {
+        max = point;
+      }
+    }
+
+    if (min.t <= max.t) {
+      sampled.push(min, max);
+    } else {
+      sampled.push(max, min);
+    }
+  }
+
+  sampled.sort((a, b) => a.t - b.t);
+  return sampled.slice(0, targetPoints);
+}
+
+const sampledVisiblePoints = computed(() => downsampleMinMax(visiblePoints.value, MAX_RENDER_POINTS));
+
+const valueRange = computed(() => {
+  if (!sampledVisiblePoints.value.length) {
+    return null;
+  }
+
+  let min = sampledVisiblePoints.value[0].value;
+  let max = sampledVisiblePoints.value[0].value;
+  for (const point of sampledVisiblePoints.value) {
     if (point.value < min) {
       min = point.value;
     }
@@ -44,19 +197,19 @@ const minMax = computed(() => {
 });
 
 const normalized = computed(() => {
-  if (!minMax.value || props.points.length === 0) {
-    return [] as { x: number; y: number; value: number; timestamp: string }[];
+  if (!activeDomain.value || !valueRange.value || sampledVisiblePoints.value.length === 0) {
+    return [] as Array<ParsedPoint & { x: number; y: number }>;
   }
 
   const innerW = width - padding * 2;
   const innerH = props.height - padding * 2;
-  const span = minMax.value.max - minMax.value.min;
-  const steps = Math.max(1, props.points.length - 1);
+  const timeSpan = Math.max(1, activeDomain.value.to - activeDomain.value.from);
+  const valueSpan = valueRange.value.max - valueRange.value.min;
 
-  return props.points.map((point, index) => {
-    const x = padding + (index / steps) * innerW;
-    const y = padding + ((minMax.value.max - point.value) / span) * innerH;
-    return { x, y, value: point.value, timestamp: point.timestamp };
+  return sampledVisiblePoints.value.map((point) => {
+    const x = padding + ((point.t - activeDomain.value!.from) / timeSpan) * innerW;
+    const y = padding + ((valueRange.value!.max - point.value) / valueSpan) * innerH;
+    return { ...point, x, y };
   });
 });
 
@@ -81,54 +234,289 @@ function formatShortTime(timestamp: string): string {
   if (Number.isNaN(date.getTime())) {
     return "--";
   }
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return date.toLocaleString([], {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function resetZoom(): void {
+  if (!fullDomain.value) {
+    return;
+  }
+  viewFrom.value = fullDomain.value.from;
+  viewTo.value = fullDomain.value.to;
+}
+
+function clampDomain(from: number, to: number): { from: number; to: number } | null {
+  if (!fullDomain.value) {
+    return null;
+  }
+
+  let nextFrom = from;
+  let nextTo = to;
+  let span = nextTo - nextFrom;
+
+  if (span < MIN_ZOOM_SPAN_MS) {
+    const center = (nextFrom + nextTo) / 2;
+    nextFrom = center - MIN_ZOOM_SPAN_MS / 2;
+    nextTo = center + MIN_ZOOM_SPAN_MS / 2;
+    span = nextTo - nextFrom;
+  }
+
+  const fullSpan = fullDomain.value.to - fullDomain.value.from;
+  if (span > fullSpan) {
+    return { from: fullDomain.value.from, to: fullDomain.value.to };
+  }
+
+  if (nextFrom < fullDomain.value.from) {
+    nextTo += fullDomain.value.from - nextFrom;
+    nextFrom = fullDomain.value.from;
+  }
+
+  if (nextTo > fullDomain.value.to) {
+    nextFrom -= nextTo - fullDomain.value.to;
+    nextTo = fullDomain.value.to;
+  }
+
+  nextFrom = Math.max(fullDomain.value.from, nextFrom);
+  nextTo = Math.min(fullDomain.value.to, nextTo);
+
+  return { from: nextFrom, to: nextTo };
+}
+
+function xToTimestamp(clientX: number): number | null {
+  if (!svgRef.value || !activeDomain.value) {
+    return null;
+  }
+  const bounds = svgRef.value.getBoundingClientRect();
+  const innerW = width - padding * 2;
+  if (bounds.width <= 0 || innerW <= 0) {
+    return null;
+  }
+
+  const localX = ((clientX - bounds.left) / bounds.width) * width;
+  const clampedX = Math.max(padding, Math.min(width - padding, localX));
+  const ratio = (clampedX - padding) / innerW;
+  return activeDomain.value.from + ratio * (activeDomain.value.to - activeDomain.value.from);
+}
+
+function onWheel(event: WheelEvent): void {
+  if (!activeDomain.value || !fullDomain.value) {
+    return;
+  }
+
+  const centerT = xToTimestamp(event.clientX);
+  if (centerT === null) {
+    return;
+  }
+
+  const zoomFactor = event.deltaY > 0 ? 1.18 : 0.82;
+  const span = activeDomain.value.to - activeDomain.value.from;
+  const nextSpan = span * zoomFactor;
+  const ratioLeft = (centerT - activeDomain.value.from) / Math.max(1, span);
+  const nextFrom = centerT - nextSpan * ratioLeft;
+  const nextTo = nextFrom + nextSpan;
+  const clamped = clampDomain(nextFrom, nextTo);
+
+  if (clamped) {
+    viewFrom.value = clamped.from;
+    viewTo.value = clamped.to;
+  }
+}
+
+function onPointerDown(event: PointerEvent): void {
+  if (event.button !== 0 || !activeDomain.value) {
+    return;
+  }
+
+  isDragging.value = true;
+  dragStartX.value = event.clientX;
+  dragStartFrom.value = activeDomain.value.from;
+  dragStartTo.value = activeDomain.value.to;
+  svgRef.value?.setPointerCapture(event.pointerId);
+}
+
+function onPointerMove(event: PointerEvent): void {
+  if (!svgRef.value) {
+    return;
+  }
+
+  const bounds = svgRef.value.getBoundingClientRect();
+  if (bounds.width <= 0) {
+    return;
+  }
+
+  const localX = ((event.clientX - bounds.left) / bounds.width) * width;
+  const localY = ((event.clientY - bounds.top) / bounds.height) * props.height;
+
+  if (isDragging.value && fullDomain.value) {
+    const span = dragStartTo.value - dragStartFrom.value;
+    const deltaMs = ((event.clientX - dragStartX.value) / Math.max(1, bounds.width)) * span;
+    const clamped = clampDomain(dragStartFrom.value - deltaMs, dragStartTo.value - deltaMs);
+    if (clamped) {
+      viewFrom.value = clamped.from;
+      viewTo.value = clamped.to;
+    }
+    return;
+  }
+
+  if (!normalized.value.length) {
+    hoverState.value = null;
+    return;
+  }
+
+  let nearest = normalized.value[0];
+  let bestDistance = Math.abs(nearest.x - localX);
+
+  for (const point of normalized.value) {
+    const distance = Math.abs(point.x - localX);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      nearest = point;
+    }
+  }
+
+  hoverState.value = {
+    x: nearest.x,
+    y: nearest.y,
+    point: {
+      t: nearest.t,
+      value: nearest.value,
+      timestamp: nearest.timestamp,
+    },
+  };
+
+  if (localY < padding || localY > props.height - padding) {
+    hoverState.value = null;
+  }
+}
+
+function onPointerUp(event: PointerEvent): void {
+  if (!isDragging.value) {
+    return;
+  }
+  isDragging.value = false;
+  svgRef.value?.releasePointerCapture(event.pointerId);
+}
+
+function onPointerLeave(): void {
+  if (!isDragging.value) {
+    hoverState.value = null;
+  }
 }
 </script>
 
 <template>
   <div class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4">
-    <svg
-      class="h-auto w-full"
-      :viewBox="`0 0 ${width} ${height}`"
-      role="img"
-      aria-label="Sensor trend chart"
-      preserveAspectRatio="none"
-    >
-      <g>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-fm-muted">
+      <div class="flex items-center gap-2">
+        <span class="uppercase tracking-[0.12em]">{{ liveMode ? "Live stream" : "Historical range" }}</span>
+        <span
+          v-if="sensorLabel"
+          class="text-fm-text"
+        >{{ sensorLabel }}</span>
+      </div>
+      <button
+        v-if="isZoomed"
+        type="button"
+        class="rounded-md border border-slate-600 bg-slate-900 px-3 py-1 font-semibold text-fm-text hover:border-fm-accent"
+        @click="resetZoom"
+      >
+        Reset zoom
+      </button>
+    </div>
+
+    <div class="relative">
+      <svg
+        ref="svgRef"
+        class="h-auto w-full"
+        :viewBox="`0 0 ${width} ${height}`"
+        role="img"
+        aria-label="Sensor trend chart"
+        preserveAspectRatio="none"
+        @wheel.prevent="onWheel"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+        @pointerleave="onPointerLeave"
+      >
+        <g>
+          <line
+            v-for="line in gridLines"
+            :key="line"
+            :x1="padding"
+            :y1="line"
+            :x2="width - padding"
+            :y2="line"
+            class="stroke-slate-700/60"
+            stroke-width="1"
+          />
+        </g>
+
         <line
-          v-for="line in gridLines"
-          :key="line"
-          :x1="padding"
-          :y1="line"
-          :x2="width - padding"
-          :y2="line"
-          class="stroke-slate-700/60"
+          v-if="hoverState"
+          :x1="hoverState.x"
+          :y1="padding"
+          :x2="hoverState.x"
+          :y2="height - padding"
+          class="stroke-fm-accent/40"
           stroke-width="1"
         />
-      </g>
 
-      <path
-        v-if="pathD"
-        :d="pathD"
-        class="fill-none stroke-fm-accent"
-        stroke-width="3"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
+        <path
+          v-if="pathD"
+          :d="pathD"
+          class="fill-none stroke-fm-accent"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
 
-      <circle
-        v-for="point in normalized"
-        :key="`${point.timestamp}-${point.x}`"
-        :cx="point.x"
-        :cy="point.y"
-        r="3"
-        class="fill-fm-accent"
+        <circle
+          v-for="point in normalized"
+          :key="`${point.timestamp}-${point.x}`"
+          :cx="point.x"
+          :cy="point.y"
+          :r="normalized.length < 320 ? 2.5 : 0"
+          class="fill-fm-accent"
+        >
+          <title>{{ point.value.toFixed(2) }} C @ {{ formatShortTime(point.timestamp) }}</title>
+        </circle>
+
+        <circle
+          v-if="hoverState"
+          :cx="hoverState.x"
+          :cy="hoverState.y"
+          r="4"
+          class="fill-fm-accent"
+        />
+      </svg>
+
+      <div
+        v-if="hoverState"
+        class="pointer-events-none absolute z-10 max-w-[280px] rounded-md border border-slate-700 bg-slate-950/95 px-3 py-2 text-xs text-fm-text shadow-panel"
+        :style="{
+          left: `${Math.max(8, Math.min(hoverState.x / width * 100, 84))}%`,
+          top: `${Math.max(6, (hoverState.y / height * 100) - 18)}%`
+        }"
       >
-        <title>{{ point.value.toFixed(2) }} C @ {{ formatShortTime(point.timestamp) }}</title>
-      </circle>
-    </svg>
+        <div class="font-semibold">
+          {{ hoverState.point.value.toFixed(2) }} C
+        </div>
+        <div class="mt-1 text-fm-muted">
+          {{ formatShortTime(hoverState.point.timestamp) }}
+        </div>
+      </div>
+    </div>
 
-    <div class="mt-3 flex items-center justify-between text-xs text-fm-muted">
+    <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-fm-muted">
+      <span>Scroll: zoom | Drag: pan</span>
       <span>{{ normalized[0] ? formatShortTime(normalized[0].timestamp) : "--" }}</span>
       <span>{{ normalized[normalized.length - 1] ? formatShortTime(normalized[normalized.length - 1].timestamp) : "--" }}</span>
     </div>
