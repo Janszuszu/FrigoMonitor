@@ -32,7 +32,8 @@ type ParsedPoint = {
   value: number;
 };
 
-const padding = 32;
+const padding = 42;
+
 const width = 960;
 const MAX_RENDER_POINTS = 1200;
 const MIN_ZOOM_SPAN_MS = 30 * 1000;
@@ -207,29 +208,10 @@ function downsampleMinMax(points: ParsedPoint[], targetPoints: number): ParsedPo
 
 const sampledVisiblePoints = computed(() => downsampleMinMax(visiblePoints.value, MAX_RENDER_POINTS));
 
-const valueRange = computed(() => {
-  if (!sampledVisiblePoints.value.length) {
-    return null;
-  }
+const FIXED_VALUE_RANGE = { min: -30, max: 40 };
 
-  let min = sampledVisiblePoints.value[0].value;
-  let max = sampledVisiblePoints.value[0].value;
-  for (const point of sampledVisiblePoints.value) {
-    if (point.value < min) {
-      min = point.value;
-    }
-    if (point.value > max) {
-      max = point.value;
-    }
-  }
+const valueRange = computed(() => FIXED_VALUE_RANGE);
 
-  if (min === max) {
-    min -= 0.2;
-    max += 0.2;
-  }
-
-  return { min, max };
-});
 
 const chartHeight = computed(() => props.fullscreen ? Math.max(400, containerWidth.value * 0.5) : props.height);
 
@@ -260,11 +242,17 @@ const pathD = computed(() => {
     .join(" ");
 });
 
+const Y_TICKS = [-30, -20, -10, 0, 10, 20, 30, 40];
+
 const gridLines = computed(() => {
-  const lines = 4;
   const innerH = chartHeight.value - padding * 2;
-  return Array.from({ length: lines + 1 }, (_, i) => padding + (i / lines) * innerH);
+  const valueSpan = FIXED_VALUE_RANGE.max - FIXED_VALUE_RANGE.min;
+  return Y_TICKS.map((tick) => ({
+    value: tick,
+    y: padding + ((FIXED_VALUE_RANGE.max - tick) / valueSpan) * innerH,
+  }));
 });
+
 
 function formatShortTime(timestamp: string): string {
   const date = new Date(timestamp);
@@ -546,16 +534,27 @@ function onPointerLeave(): void {
       >
         <g>
           <line
-            v-for="line in gridLines"
-            :key="line"
+            v-for="gl in gridLines"
+            :key="gl.value"
             :x1="padding"
-            :y1="line"
+            :y1="gl.y"
             :x2="width - padding"
-            :y2="line"
+            :y2="gl.y"
             class="stroke-slate-700/60"
             stroke-width="1"
           />
         </g>
+
+        <g class="text-[11px] fill-fm-muted">
+          <text
+            v-for="gl in gridLines"
+            :key="'label-' + gl.value"
+            :x="padding - 6"
+            :y="gl.y + 4"
+            text-anchor="end"
+          >{{ gl.value > 0 ? '+' : '' }}{{ gl.value }}°C</text>
+        </g>
+
 
         <line
           v-if="hoverState"
