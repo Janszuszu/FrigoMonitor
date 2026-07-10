@@ -98,7 +98,7 @@ export const useMeasurementsStore = defineStore("measurements", () => {
       created_at: measuredAt,
     };
 
-    items.value = [liveMeasurement, ...items.value.filter((item) => item.id !== liveMeasurement.id)].slice(0, 100);
+    items.value = [liveMeasurement, ...items.value.filter((item) => item.id !== liveMeasurement.id)].slice(0, 500);
 
     sensorsStore.patchById(sensorId, {
       last_value: value,

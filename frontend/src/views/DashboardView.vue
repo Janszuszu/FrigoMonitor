@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 
 import SensorTrendChart from "@/components/SensorTrendChart.vue";
 import StatusCard from "@/components/StatusCard.vue";
@@ -19,7 +19,7 @@ const systemStore = useSystemStore();
 const sensorById = computed(() => new Map(sensorsStore.items.map((sensor) => [sensor.id, sensor])));
 const deviceById = computed(() => new Map(devicesStore.items.map((device) => [device.id, device])));
 const selectedSensorId = ref<number | null>(null);
-const selectedRange = ref<"LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "CUSTOM">("LIVE");
+const selectedRange = ref<"LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "30d" | "CUSTOM">("LIVE");
 const customFrom = ref("");
 const customTo = ref("");
 const trendLoading = ref(false);
@@ -27,14 +27,16 @@ const trendError = ref<string | null>(null);
 const historyPoints = ref<{ timestamp: string; value: number }[]>([]);
 
 const LIVE_WINDOW_MS = 60 * 60 * 1000;
+const LIVE_MAX_POINTS = 500;
 
-const rangeOptions: { key: "LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "CUSTOM"; label: string }[] = [
+const rangeOptions: { key: "LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "30d" | "CUSTOM"; label: string }[] = [
   { key: "LIVE", label: "LIVE" },
   { key: "1h", label: "1h" },
   { key: "6h", label: "6h" },
   { key: "24h", label: "24h" },
   { key: "72h", label: "72h" },
   { key: "7d", label: "7d" },
+  { key: "30d", label: "30d" },
   { key: "CUSTOM", label: "Custom" },
 ];
 
@@ -85,6 +87,7 @@ const livePoints = computed(() => {
     })
     .slice()
     .sort((a, b) => new Date(a.measured_at).getTime() - new Date(b.measured_at).getTime())
+    .slice(-LIVE_MAX_POINTS)
     .map((item) => ({
       timestamp: item.measured_at,
       value: item.value,
@@ -104,7 +107,7 @@ function localDateTimeToIso(value: string): string | null {
   return date.toISOString();
 }
 
-function buildPresetRange(range: "1h" | "6h" | "24h" | "72h" | "7d"): { from: string; to: string } {
+function buildPresetRange(range: "1h" | "6h" | "24h" | "72h" | "7d" | "30d"): { from: string; to: string } {
   const to = new Date();
   const from = new Date(to);
   if (range === "1h") {
@@ -115,8 +118,10 @@ function buildPresetRange(range: "1h" | "6h" | "24h" | "72h" | "7d"): { from: st
     from.setHours(from.getHours() - 24);
   } else if (range === "72h") {
     from.setHours(from.getHours() - 72);
-  } else {
+  } else if (range === "7d") {
     from.setDate(from.getDate() - 7);
+  } else {
+    from.setDate(from.getDate() - 30);
   }
   return { from: from.toISOString(), to: to.toISOString() };
 }
@@ -179,6 +184,24 @@ watch(
   },
 );
 
+// Fullscreen state
+const chartContainerRef = ref<HTMLElement | null>(null);
+const isFullscreen = ref(false);
+
+function toggleFullscreen(): void {
+  if (!chartContainerRef.value) return;
+
+  if (!document.fullscreenElement) {
+    void chartContainerRef.value.requestFullscreen();
+  } else {
+    void document.exitFullscreen();
+  }
+}
+
+function onFullscreenChange(): void {
+  isFullscreen.value = !!document.fullscreenElement;
+}
+
 onMounted(async () => {
   try {
     await Promise.all([systemStore.load(), devicesStore.load(), sensorsStore.load(), measurementsStore.load()]);
@@ -186,6 +209,11 @@ onMounted(async () => {
   } catch (error) {
     console.error("Failed to load dashboard", error);
   }
+  document.addEventListener("fullscreenchange", onFullscreenChange);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("fullscreenchange", onFullscreenChange);
 });
 </script>
 
@@ -293,33 +321,41 @@ onMounted(async () => {
         </div>
       </div>
 
-      <SensorTrendChart
-        v-if="trendPoints.length"
-        :points="trendPoints"
-        :live-mode="isLive"
-        :sensor-label="selectedSensorLabel"
-      />
-
-      <article
-        v-else-if="!trendLoading"
-        class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
+      <div
+        ref="chartContainerRef"
+        class="relative"
+        :class="{ 'fm-fullscreen': isFullscreen }"
       >
-        No measurements available yet for the selected sensor.
-      </article>
+        <SensorTrendChart
+          v-if="trendPoints.length"
+          :points="trendPoints"
+          :live-mode="isLive"
+          :sensor-label="selectedSensorLabel"
+          :fullscreen="isFullscreen"
+          @toggle-fullscreen="toggleFullscreen"
+        />
 
-      <article
-        v-if="trendLoading"
-        class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
-      >
-        Loading trend data...
-      </article>
+        <article
+          v-else-if="!trendLoading"
+          class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
+        >
+          No measurements available yet for the selected sensor.
+        </article>
 
-      <article
-        v-if="measurementsStore.error || trendError"
-        class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
-      >
-        {{ trendError || "Measurements unavailable (REST). Showing live data when available." }}
-      </article>
+        <article
+          v-if="trendLoading"
+          class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
+        >
+          Loading trend data...
+        </article>
+
+        <article
+          v-if="measurementsStore.error || trendError"
+          class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
+        >
+          {{ trendError || "Measurements unavailable (REST). Showing live data when available." }}
+        </article>
+      </div>
     </section>
 
     <div class="grid gap-4 lg:grid-cols-2">
@@ -332,3 +368,15 @@ onMounted(async () => {
     </div>
   </section>
 </template>
+
+<style scoped>
+.fm-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #05070b;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+}
+</style>

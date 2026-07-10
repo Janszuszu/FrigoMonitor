@@ -30,6 +30,27 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
     FRONTEND_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # NT57B08 default settings (index 0)
+    NT57B08_ENABLED: bool = False
+    NT57B08_PORT: str = "/dev/ttyUSB0"
+    NT57B08_BAUDRATE: int = 9600
+    NT57B08_PARITY: str = "N"
+    NT57B08_STOPBITS: int = 1
+    NT57B08_BYTESIZE: int = 8
+    NT57B08_SLAVE_ID: int = 1
+    NT57B08_TIMEOUT: float = 1.0
+    NT57B08_POLL_INTERVAL: float = 5.0
+    NT57B08_RETRY_INTERVAL: float = 2.0
+    NT57B08_FUNCTION_CODE: int = 4
+    NT57B08_START_REGISTER: int = 0
+    NT57B08_CHANNEL_COUNT: int = 8
+    NT57B08_DEVICE_SERIAL: str = "NT57B08-1"
+    NT57B08_DEVICE_NAME: str = "NT57B08 Module"
+    NT57B08_CONVERSION_MODE: str = "temperature_direct_scaled"
+    NT57B08_CHANNELS: str = ""
+    # Number of NT57B08 modules (indexed 0..NT57B08_MODULE_COUNT-1)
+    NT57B08_MODULE_COUNT: int = 0
+
     # Measurement limits (defaults in degrees Celsius)
     MEASUREMENT_MIN: float = -100.0
     MEASUREMENT_MAX: float = 100.0

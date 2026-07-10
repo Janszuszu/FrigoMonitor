@@ -57,7 +57,7 @@ def measurement_history(
     to_ts: datetime | None = Query(None, alias="to"),
     skip: int = Query(0, ge=0),
     limit: int = Query(5000, ge=1, le=50000),
-    target_points: int | None = Query(None, ge=100, le=5000),
+    target_points: int | None = Query(None, ge=6, le=5000),
     db: Session = Depends(get_db),
 ):
     if from_ts is not None and to_ts is not None and from_ts > to_ts:

@@ -6,6 +6,7 @@ from app.logger import logger
 from app.api import system, devices, sensors, measurements
 from app.services.device_manager import device_manager as _device_manager
 from app.services.modbus_rtu_service import modbus_rtu_service
+from app.services.nt57b08_service import nt57b08_service
 from app.services.mqtt_service import mqtt_service
 from app.ws.websocket_manager import router as websocket_router
 
@@ -29,10 +30,12 @@ def startup():
     Base.metadata.create_all(bind=engine)
     mqtt_service.connect()
     modbus_rtu_service.start()
+    nt57b08_service.start()
 
 
 @app.on_event("shutdown")
 def shutdown():
+    nt57b08_service.stop()
     modbus_rtu_service.stop()
     mqtt_service.disconnect()
 

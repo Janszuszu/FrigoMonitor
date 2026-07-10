@@ -189,7 +189,9 @@ def test_sensors_endpoints_and_measurements():
             "target_points": 6,
         },
     )
-    assert r.status_code == 422
+    assert r.status_code == 200
+    downsampled_small = r.json()
+    assert len(downsampled_small) <= 6
 
     r = client.get(
         "/api/v1/measurements/history",
