@@ -11,7 +11,7 @@ export const useAlarmsStore = defineStore("alarms", () => {
   const liveAlarms = computed<AlarmRow[]>(() => []);
 
   const items = computed<AlarmRow[]>(() => {
-    const deviceMap = new Map(devicesStore.items.map((device) => [device.id, device.name]));
+    const deviceMap = new Map(devicesStore.items.map((device) => [device.id, device.display_name || device.name]));
 
     return sensorsStore.items
       .filter((sensor) => sensor.alarm_state && sensor.alarm_state !== "NORMAL")

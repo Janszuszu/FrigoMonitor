@@ -9,7 +9,7 @@ const devicesStore = useDevicesStore();
 const sensorsStore = useSensorsStore();
 
 const rows = computed(() => {
-  const deviceMap = new Map(devicesStore.items.map((device) => [device.id, device.name]));
+  const deviceMap = new Map(devicesStore.items.map((device) => [device.id, device.display_name || device.name]));
   return sensorsStore.items.map((sensor) => ({
     ...sensor,
     deviceName: deviceMap.get(sensor.device_id) || "Unknown",

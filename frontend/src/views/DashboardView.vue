@@ -45,7 +45,7 @@ const sensorOptions = computed(() => {
     const device = deviceById.value.get(sensor.device_id);
     return {
       id: sensor.id,
-      label: `${device?.name || "Unknown device"} - ${sensor.name || `Sensor ${sensor.id}`}`,
+      label: `${device?.display_name || device?.name || "Unknown device"} - ${sensor.name || `Sensor ${sensor.id}`}`,
     };
   });
 });
