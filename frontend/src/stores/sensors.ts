@@ -72,6 +72,14 @@ export const useSensorsStore = defineStore("sensors", () => {
         payload.alarm_level !== undefined
           ? (payload.alarm_level ? String(payload.alarm_level) : null)
           : current?.alarm_level || null,
+      alarm_no_data_enabled:
+        payload.alarm_no_data_enabled !== undefined
+          ? Boolean(payload.alarm_no_data_enabled)
+          : current?.alarm_no_data_enabled || false,
+      alarm_no_data_timeout:
+        payload.alarm_no_data_timeout !== undefined
+          ? Number(payload.alarm_no_data_timeout)
+          : current?.alarm_no_data_timeout || 15,
       last_value:
         payload.last_value !== undefined
           ? Number(payload.last_value)

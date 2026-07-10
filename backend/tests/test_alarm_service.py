@@ -1,120 +1,314 @@
+"""Tests for the alarm service."""
+
 import sys
 import os
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.getcwd(), "backend"))
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from app.database import Base, engine, SessionLocal
+from app.database import Base
 from app.models.device import Device
 from app.models.sensor import Sensor
 from app.models.alarm import Alarm
-from app.services.measurement_service import measurement_service
-from app.services.alarm_service import alarm_service, AlarmState
+from app.models.alarm_event import AlarmEvent
+from app.services.alarm_service import AlarmService, AlarmState
 
 
-@pytest.fixture(autouse=True)
-def prepare_db():
-    Base.metadata.drop_all(bind=engine)
+
+@pytest.fixture
+def db_session():
+    """Create a fresh in-memory database for each test."""
+    engine = create_engine("sqlite:///:memory:", echo=False)
     Base.metadata.create_all(bind=engine)
-    yield
+    TestSession = sessionmaker(bind=engine)
+    session = TestSession()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
-def create_device_sensor(sensor_kwargs=None):
-    sensor_kwargs = sensor_kwargs or {}
-    with SessionLocal() as s:
-        dev = Device(name="AlarmDev", serial_number="DEV0")
-        s.add(dev)
-        s.commit()
-        s.refresh(dev)
-        sensor = Sensor(device_id=dev.id, name="sensor1", **sensor_kwargs)
-        s.add(sensor)
-        s.commit()
-        s.refresh(sensor)
-        return dev, sensor
+@pytest.fixture
+def device(db_session):
+    """Create a test device."""
+    d = Device(name="TestDevice", serial_number="SN001")
+    db_session.add(d)
+    db_session.commit()
+    db_session.refresh(d)
+    return d
 
 
-def test_high_alarm_activation():
-    _, sensor = create_device_sensor({"alarm_high": 10.0, "alarm_low": None})
-    measurement_service.save_measurement("DEV0", "sensor1", 12.0, timestamp=datetime.now(UTC))
-
-    with SessionLocal() as s:
-        sensor_db = s.get(Sensor, sensor.id)
-        assert sensor_db.alarm_state == AlarmState.ACTIVE
-        alarm = s.query(Alarm).filter(Alarm.sensor_id == sensor.id).order_by(Alarm.id.desc()).first()
-        assert alarm is not None
-        assert alarm.state == AlarmState.ACTIVE
-        assert alarm.level == "HIGH"
-
-
-def test_low_alarm_activation():
-    _, sensor = create_device_sensor({"alarm_high": None, "alarm_low": 5.0})
-    measurement_service.save_measurement("DEV0", "sensor1", 3.0, timestamp=datetime.now(UTC))
-
-    with SessionLocal() as s:
-        sensor_db = s.get(Sensor, sensor.id)
-        assert sensor_db.alarm_state == AlarmState.ACTIVE
-        alarm = s.query(Alarm).filter(Alarm.sensor_id == sensor.id).order_by(Alarm.id.desc()).first()
-        assert alarm.state == AlarmState.ACTIVE
-        assert alarm.level == "LOW"
-
-
-def test_hysteresis_prevents_clear_until_threshold():
-    _, sensor = create_device_sensor({"alarm_high": 10.0, "alarm_hysteresis": 2.0})
-    now = datetime.now(UTC)
-    measurement_service.save_measurement("DEV0", "sensor1", 12.0, timestamp=now)
-    measurement_service.save_measurement("DEV0", "sensor1", 9.5, timestamp=now + timedelta(seconds=10))
-
-    with SessionLocal() as s:
-        sensor_db = s.get(Sensor, sensor.id)
-        assert sensor_db.alarm_state == AlarmState.ACTIVE
-
-    measurement_service.save_measurement("DEV0", "sensor1", 8.0, timestamp=now + timedelta(seconds=20))
-    with SessionLocal() as s:
-        sensor_db = s.get(Sensor, sensor.id)
-        assert sensor_db.alarm_state == AlarmState.CLEARED
+@pytest.fixture
+def sensor(db_session, device):
+    """Create a test sensor with alarm settings."""
+    s = Sensor(
+        device_id=device.id,
+        name="TestSensor",
+        sensor_type="temperature",
+        alarm_enabled=True,
+        alarm_low=-25.0,
+        alarm_high=-15.0,
+        alarm_activation_delay=600,  # 10 minutes in seconds
+        alarm_state=AlarmState.NORMAL,
+        alarm_level=None,
+        alarm_pending_since=None,
+        alarm_no_data_enabled=False,
+        alarm_no_data_timeout=15,
+        alarm_no_data_state=AlarmState.NORMAL,
+        alarm_no_data_since=None,
+    )
+    db_session.add(s)
+    db_session.commit()
+    db_session.refresh(s)
+    return s
 
 
-def test_activation_delay_enforces_pending():
-    _, sensor = create_device_sensor({"alarm_high": 10.0, "alarm_activation_delay": 5})
-    now = datetime.now(UTC)
-    measurement_service.save_measurement("DEV0", "sensor1", 12.0, timestamp=now)
+class TestAlarmService:
+    """Test suite for AlarmService."""
 
-    with SessionLocal() as s:
-        sensor_db = s.get(Sensor, sensor.id)
-        assert sensor_db.alarm_state == AlarmState.PENDING
+    def test_high_temperature_pending_state(self, db_session, sensor):
+        """Test that high temperature creates a pending state."""
+        service = AlarmService()
+        now = datetime.now(UTC)
 
-    measurement_service.save_measurement("DEV0", "sensor1", 12.0, timestamp=now + timedelta(seconds=6))
-    with SessionLocal() as s:
-        sensor_db = s.get(Sensor, sensor.id)
-        assert sensor_db.alarm_state == AlarmState.ACTIVE
+        # Temperature exceeds high threshold
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
 
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.PENDING_HIGH
+        assert sensor.alarm_level == AlarmState.ALARM_HIGH
+        assert sensor.alarm_pending_since is not None
 
-def test_acknowledge_moves_active_to_acknowledged():
-    _, sensor = create_device_sensor({"alarm_high": 10.0})
-    measurement_service.save_measurement("DEV0", "sensor1", 12.0, timestamp=datetime.now(UTC))
-    alarm_service.acknowledge(sensor.id)
+    def test_high_temperature_activation_after_delay(self, db_session, sensor):
+        """Test that alarm activates after the configured delay."""
+        service = AlarmService()
+        now = datetime.now(UTC)
 
-    with SessionLocal() as s:
-        sensor_db = s.get(Sensor, sensor.id)
-        assert sensor_db.alarm_state == AlarmState.ACKNOWLEDGED
+        # First measurement - should go to pending
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
 
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.PENDING_HIGH
 
-def test_clear_resets_state():
-    _, sensor = create_device_sensor({"alarm_high": 10.0})
-    measurement_service.save_measurement("DEV0", "sensor1", 12.0, timestamp=datetime.now(UTC))
-    alarm_service.clear(sensor.id)
+        # Second measurement after delay - should activate
+        later = now + timedelta(seconds=sensor.alarm_activation_delay + 1)
+        service.process_measurement(sensor.id, -12.0, later, session=db_session)
 
-    with SessionLocal() as s:
-        sensor_db = s.get(Sensor, sensor.id)
-        assert sensor_db.alarm_state == AlarmState.CLEARED
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.ALARM_HIGH
+        assert sensor.alarm_level == AlarmState.ALARM_HIGH
+        assert sensor.alarm_pending_since is None
 
+    def test_pending_alarm_cancellation_after_recovery(self, db_session, sensor):
+        """Test that pending alarm is cancelled when temperature returns to normal."""
+        service = AlarmService()
+        now = datetime.now(UTC)
 
-def test_disabled_rule_ignores_alarm():
-    _, sensor = create_device_sensor({"alarm_high": 10.0, "alarm_enabled": False})
-    measurement_service.save_measurement("DEV0", "sensor1", 12.0, timestamp=datetime.now(UTC))
+        # First measurement - should go to pending
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
 
-    with SessionLocal() as s:
-        sensor_db = s.get(Sensor, sensor.id)
-        assert sensor_db.alarm_state in (AlarmState.CLEARED, AlarmState.NORMAL)
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.PENDING_HIGH
+
+        # Temperature returns to normal - should cancel pending
+        service.process_measurement(sensor.id, -20.0, now + timedelta(minutes=1), session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.NORMAL
+        assert sensor.alarm_level is None
+
+    def test_low_temperature_alarm(self, db_session, sensor):
+        """Test that low temperature creates alarm after delay."""
+        service = AlarmService()
+        now = datetime.now(UTC)
+
+        # Temperature below low threshold
+        service.process_measurement(sensor.id, -30.0, now, session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.PENDING_LOW
+        assert sensor.alarm_level == AlarmState.ALARM_LOW
+
+        # After delay
+        later = now + timedelta(seconds=sensor.alarm_activation_delay + 1)
+        service.process_measurement(sensor.id, -30.0, later, session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.ALARM_LOW
+
+    def test_alarm_recovery(self, db_session, sensor):
+        """Test that active alarm clears when temperature returns to normal."""
+        service = AlarmService()
+        now = datetime.now(UTC)
+
+        # Activate alarm
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
+        later = now + timedelta(seconds=sensor.alarm_activation_delay + 1)
+        service.process_measurement(sensor.id, -12.0, later, session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.ALARM_HIGH
+
+        # Temperature returns to normal
+        service.process_measurement(sensor.id, -20.0, later + timedelta(minutes=1), session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.NORMAL
+        assert sensor.alarm_level is None
+
+    def test_no_data_alarm(self, db_session, sensor):
+        """Test that no-data alarm activates after timeout."""
+        sensor.alarm_no_data_enabled = True
+        sensor.alarm_no_data_timeout = 1  # 1 minute
+        sensor.last_measurement = datetime.now(UTC) - timedelta(minutes=5)
+        db_session.commit()
+
+        service = AlarmService()
+        service.check_no_data_alarms(session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_no_data_state == AlarmState.NO_DATA
+
+    def test_no_data_alarm_clears_on_measurement(self, db_session, sensor):
+        """Test that no-data alarm clears when measurement arrives."""
+        sensor.alarm_no_data_enabled = True
+        sensor.alarm_no_data_timeout = 1
+        sensor.last_measurement = datetime.now(UTC) - timedelta(minutes=5)
+        sensor.alarm_no_data_state = AlarmState.NO_DATA
+        sensor.alarm_no_data_since = datetime.now(UTC) - timedelta(minutes=5)
+        db_session.commit()
+
+        service = AlarmService()
+        now = datetime.now(UTC)
+        service.process_measurement(sensor.id, -20.0, now, session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_no_data_state == AlarmState.NORMAL
+        assert sensor.alarm_no_data_since is None
+
+    def test_persistence_of_settings(self, db_session, sensor):
+        """Test that alarm settings persist in the database."""
+        sensor.alarm_low = -30.0
+        sensor.alarm_high = -10.0
+        sensor.alarm_activation_delay = 300
+        sensor.alarm_no_data_enabled = True
+        sensor.alarm_no_data_timeout = 30
+        db_session.commit()
+
+        # Re-read from database
+        db_session.expire_all()
+        reloaded = db_session.query(Sensor).filter(Sensor.id == sensor.id).one()
+
+        assert reloaded.alarm_low == -30.0
+        assert reloaded.alarm_high == -10.0
+        assert reloaded.alarm_activation_delay == 300
+        assert reloaded.alarm_no_data_enabled is True
+        assert reloaded.alarm_no_data_timeout == 30
+
+    def test_independent_settings_for_different_sensors(self, db_session, device):
+        """Test that different sensors have independent alarm settings."""
+        s1 = Sensor(
+            device_id=device.id,
+            name="Sensor1",
+            alarm_enabled=True,
+            alarm_low=-25.0,
+            alarm_high=-15.0,
+            alarm_activation_delay=600,
+            alarm_state=AlarmState.NORMAL,
+            alarm_no_data_enabled=True,
+            alarm_no_data_timeout=10,
+            alarm_no_data_state=AlarmState.NORMAL,
+        )
+        s2 = Sensor(
+            device_id=device.id,
+            name="Sensor2",
+            alarm_enabled=False,
+            alarm_low=None,
+            alarm_high=None,
+            alarm_activation_delay=0,
+            alarm_state=AlarmState.NORMAL,
+            alarm_no_data_enabled=False,
+            alarm_no_data_timeout=30,
+            alarm_no_data_state=AlarmState.NORMAL,
+        )
+        db_session.add_all([s1, s2])
+        db_session.commit()
+
+        assert s1.alarm_low == -25.0
+        assert s1.alarm_high == -15.0
+        assert s1.alarm_activation_delay == 600
+        assert s1.alarm_no_data_enabled is True
+        assert s1.alarm_no_data_timeout == 10
+
+        assert s2.alarm_low is None
+        assert s2.alarm_high is None
+        assert s2.alarm_activation_delay == 0
+        assert s2.alarm_no_data_enabled is False
+        assert s2.alarm_no_data_timeout == 30
+
+    def test_alarm_disabled_clears_alarm(self, db_session, sensor):
+        """Test that disabling alarms clears any active alarm."""
+        service = AlarmService()
+        now = datetime.now(UTC)
+
+        # Activate alarm
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
+        later = now + timedelta(seconds=sensor.alarm_activation_delay + 1)
+        service.process_measurement(sensor.id, -12.0, later, session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.ALARM_HIGH
+
+        # Disable alarm
+        sensor.alarm_enabled = False
+        db_session.commit()
+
+        # Process measurement - should clear alarm
+        service.process_measurement(sensor.id, -12.0, later + timedelta(minutes=1), session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.NORMAL
+
+    def test_no_thresholds_no_alarm(self, db_session, sensor):
+        """Test that no thresholds configured means no alarm."""
+        sensor.alarm_low = None
+        sensor.alarm_high = None
+        db_session.commit()
+
+        service = AlarmService()
+        now = datetime.now(UTC)
+        service.process_measurement(sensor.id, 100.0, now, session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.NORMAL
+
+    def test_alarm_event_created(self, db_session, sensor):
+        """Test that alarm events are created in the database."""
+        service = AlarmService()
+        now = datetime.now(UTC)
+
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
+
+        events = db_session.query(AlarmEvent).filter(AlarmEvent.sensor_id == sensor.id).all()
+        assert len(events) >= 1
+        assert events[0].alarm_type == AlarmState.ALARM_HIGH
+        assert events[0].state == AlarmState.PENDING_HIGH
+
+    def test_alarm_history_persists(self, db_session, sensor):
+        """Test that alarm history persists in the database."""
+        service = AlarmService()
+        now = datetime.now(UTC)
+
+        # Create alarm event
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
+
+        # Simulate restart by clearing session
+        db_session.expire_all()
+
+        # Verify history still exists
+        events = db_session.query(AlarmEvent).filter(AlarmEvent.sensor_id == sensor.id).all()
+        assert len(events) >= 1

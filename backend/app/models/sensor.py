@@ -32,6 +32,10 @@ class Sensor(Base):
     alarm_state = Column(String(20), default="NORMAL", nullable=False, index=True)
     alarm_level = Column(String(20), nullable=True)
     alarm_pending_since = Column(DateTime(timezone=True), nullable=True)
+    alarm_no_data_enabled = Column(Boolean, default=False, nullable=False)
+    alarm_no_data_timeout = Column(Integer, default=15, nullable=False)
+    alarm_no_data_since = Column(DateTime(timezone=True), nullable=True)
+    alarm_no_data_state = Column(String(20), default="NORMAL", nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_value = Column(Float, nullable=True, index=False)

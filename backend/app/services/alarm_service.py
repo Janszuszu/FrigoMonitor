@@ -13,20 +13,18 @@ from app.core.event_bus import (
 from app.database import SessionLocal
 from app.logger import logger
 from app.models.alarm import Alarm
+from app.models.alarm_event import AlarmEvent
 from app.models.sensor import Sensor
 
 
 class AlarmState:
     NORMAL = "NORMAL"
-    PENDING = "PENDING"
-    ACTIVE = "ACTIVE"
-    ACKNOWLEDGED = "ACKNOWLEDGED"
+    PENDING_HIGH = "PENDING_HIGH"
+    PENDING_LOW = "PENDING_LOW"
+    ALARM_HIGH = "ALARM_HIGH"
+    ALARM_LOW = "ALARM_LOW"
+    NO_DATA = "NO_DATA"
     CLEARED = "CLEARED"
-
-
-class AlarmLevel:
-    HIGH = "HIGH"
-    LOW = "LOW"
 
 
 class AlarmService:
@@ -36,96 +34,75 @@ class AlarmService:
         value: float,
         timestamp: datetime,
         measurement_id: Optional[int] = None,
+        session: Optional[SessionLocal] = None,
     ) -> None:
         if timestamp is None:
             timestamp = datetime.now(UTC)
 
-        try:
-            with SessionLocal() as session:
-                sensor = session.query(Sensor).filter(Sensor.id == sensor_id).one_or_none()
-                if sensor is None:
-                    logger.warning("AlarmService: unknown sensor %s", sensor_id)
-                    return
+        def _process(s):
+            sensor = s.query(Sensor).filter(Sensor.id == sensor_id).one_or_none()
+            if sensor is None:
+                logger.warning("AlarmService: unknown sensor %s", sensor_id)
+                return
 
-                if not sensor.alarm_enabled:
-                    if sensor.alarm_state not in (AlarmState.NORMAL, AlarmState.CLEARED):
-                        self._transition_state(session, sensor, AlarmState.CLEARED, None, measurement_id, "Alarm disabled")
-                    return
+            # Update last_measurement for no-data detection
+            sensor.last_measurement = timestamp
 
-                rule = self._resolve_rule(sensor)
-                if rule is None:
-                    logger.warning("Invalid rule for sensor %s", sensor.id)
-                    return
+            if not sensor.alarm_enabled:
+                self._clear_any_alarm(s, sensor, measurement_id, "Alarm disabled")
+                return
 
-                self._evaluate_sensor(session, sensor, value, timestamp, measurement_id, rule)
-        except SQLAlchemyError:
-            logger.exception("Database error in AlarmService.process_measurement")
+            # Check no-data alarm - if we got a measurement, clear no-data state
+            if sensor.alarm_no_data_state == AlarmState.NO_DATA:
+                self._clear_no_data(s, sensor, measurement_id)
 
-    def acknowledge(self, sensor_id: int) -> None:
-        try:
-            with SessionLocal() as session:
-                sensor = session.query(Sensor).filter(Sensor.id == sensor_id).one_or_none()
-                if sensor is None:
-                    logger.warning("AlarmService: unknown sensor %s", sensor_id)
-                    return
+            low = sensor.alarm_low
+            high = sensor.alarm_high
+            delay = sensor.alarm_activation_delay or 0
 
-                if sensor.alarm_state != AlarmState.ACTIVE:
-                    return
+            if low is None and high is None:
+                self._clear_any_alarm(s, sensor, measurement_id, "No thresholds configured")
+                return
 
-                self._transition_state(
-                    session,
-                    sensor,
-                    AlarmState.ACKNOWLEDGED,
-                    sensor.alarm_level,
-                    None,
-                    "Alarm acknowledged",
-                )
-                logger.info("Alarm acknowledged for sensor %s", sensor_id)
-        except SQLAlchemyError:
-            logger.exception("Database error while acknowledging alarm")
+            if low is not None and high is not None and low >= high:
+                self._clear_any_alarm(s, sensor, measurement_id, "Invalid thresholds")
+                return
 
-    def clear(self, sensor_id: int) -> None:
-        try:
-            with SessionLocal() as session:
-                sensor = session.query(Sensor).filter(Sensor.id == sensor_id).one_or_none()
-                if sensor is None:
-                    logger.warning("AlarmService: unknown sensor %s", sensor_id)
-                    return
+            self._evaluate_sensor(s, sensor, value, timestamp, measurement_id, low, high, delay)
 
-                if sensor.alarm_state == AlarmState.NORMAL:
-                    return
+        if session is not None:
+            _process(session)
+        else:
+            try:
+                with SessionLocal() as s:
+                    _process(s)
+            except SQLAlchemyError:
+                logger.exception("Database error in AlarmService.process_measurement")
 
-                self._transition_state(session, sensor, AlarmState.CLEARED, None, None, "Alarm cleared")
-                logger.info("Alarm cleared for sensor %s", sensor_id)
-        except SQLAlchemyError:
-            logger.exception("Database error while clearing alarm")
+    def check_no_data_alarms(self, session: Optional[SessionLocal] = None) -> None:
+        """Check all sensors for no-data condition. Called periodically."""
+        def _check(s):
+            sensors = s.query(Sensor).filter(Sensor.alarm_enabled == True).all()  # noqa: E712
+            now = datetime.now(UTC)
+            for sensor in sensors:
+                if not sensor.alarm_no_data_enabled:
+                    continue
+                if sensor.last_measurement is None:
+                    continue
+                last = self._normalize_timestamp(sensor.last_measurement)
+                timeout = timedelta(minutes=sensor.alarm_no_data_timeout or 15)
+                if now - last >= timeout:
+                    if sensor.alarm_no_data_state != AlarmState.NO_DATA:
+                        self._activate_no_data(s, sensor, now)
 
-    def _resolve_rule(self, sensor: Sensor) -> Optional[dict[str, object]]:
-        low = sensor.alarm_low
-        high = sensor.alarm_high
-        hysteresis = sensor.alarm_hysteresis or 0.0
-        delay = sensor.alarm_activation_delay or 0
-
-        if low is None and high is None:
-            return None
-
-        if low is not None and high is not None and low >= high:
-            return None
-
-        if hysteresis < 0 or delay < 0:
-            return None
-
-        return {
-            "low": low,
-            "high": high,
-            "hysteresis": hysteresis,
-            "delay": delay,
-        }
-
-    def _normalize_timestamp(self, timestamp: datetime) -> datetime:
-        if timestamp.tzinfo is None:
-            return timestamp.replace(tzinfo=UTC)
-        return timestamp.astimezone(UTC)
+        if session is not None:
+            _check(session)
+        else:
+            try:
+                with SessionLocal() as s:
+                    _check(s)
+            except SQLAlchemyError:
+                logger.exception("Database error in AlarmService.check_no_data_alarms")
 
     def _evaluate_sensor(
         self,
@@ -134,29 +111,46 @@ class AlarmService:
         value: float,
         timestamp: datetime,
         measurement_id: Optional[int],
-        rule: dict[str, object],
+        low: Optional[float],
+        high: Optional[float],
+        delay: int,
     ) -> None:
         timestamp = self._normalize_timestamp(timestamp)
-        low = rule["low"]
-        high = rule["high"]
-        hysteresis = rule["hysteresis"]
-        delay = rule["delay"]
+        current_state = sensor.alarm_state
 
-        triggered_level = None
-        if high is not None and value > high:
-            triggered_level = AlarmLevel.HIGH
-        elif low is not None and value < low:
-            triggered_level = AlarmLevel.LOW
+        # Determine if we're outside bounds
+        is_high = high is not None and value > high
+        is_low = low is not None and value < low
 
-        if triggered_level is None:
-            self._handle_clear_if_needed(session, sensor, value, hysteresis, measurement_id)
+        if not is_high and not is_low:
+            # Within normal range - clear any pending or active alarms
+            if current_state in (AlarmState.PENDING_HIGH, AlarmState.PENDING_LOW,
+                                 AlarmState.ALARM_HIGH, AlarmState.ALARM_LOW):
+                self._clear_alarm(session, sensor, measurement_id, "Temperature returned to normal")
             return
 
-        if sensor.alarm_state == AlarmState.PENDING:
-            if sensor.alarm_level != triggered_level:
-                self._transition_to_pending(session, sensor, triggered_level, timestamp, measurement_id)
+        # We're outside bounds
+        if is_high:
+            target_state = AlarmState.ALARM_HIGH
+            target_pending = AlarmState.PENDING_HIGH
+        else:
+            target_state = AlarmState.ALARM_LOW
+            target_pending = AlarmState.PENDING_LOW
+
+        if current_state == AlarmState.NORMAL:
+            if delay > 0:
+                self._transition_to_pending(session, sensor, target_pending, timestamp, measurement_id, value, high if is_high else low)
+            else:
+                self._activate_alarm(session, sensor, target_state, timestamp, measurement_id, value, high if is_high else low)
+            return
+
+        if current_state == target_pending:
+            # Check if we need to switch direction (e.g., was pending low, now high)
+            if sensor.alarm_level != target_state:
+                self._transition_to_pending(session, sensor, target_pending, timestamp, measurement_id, value, high if is_high else low)
                 return
 
+            # Still in pending - check if delay has elapsed
             if sensor.alarm_pending_since is None:
                 sensor.alarm_pending_since = timestamp
                 session.commit()
@@ -164,114 +158,181 @@ class AlarmService:
 
             pending_since = self._normalize_timestamp(sensor.alarm_pending_since)
             if timestamp - pending_since >= timedelta(seconds=delay):
-                self._transition_state(
-                    session,
-                    sensor,
-                    AlarmState.ACTIVE,
-                    triggered_level,
-                    measurement_id,
-                    f"Alarm activated: {triggered_level}",
-                )
-                logger.info("Alarm activated for sensor %s", sensor.id)
-                return
-
+                self._activate_alarm(session, sensor, target_state, timestamp, measurement_id, value, high if is_high else low)
             return
 
-        if sensor.alarm_state in (AlarmState.ACTIVE, AlarmState.ACKNOWLEDGED):
-            if sensor.alarm_level == triggered_level:
-                return
-            self._transition_to_pending(session, sensor, triggered_level, timestamp, measurement_id)
+        if current_state == target_state:
+            # Already active, just update temperature
+            self._update_alarm_temperature(session, sensor, measurement_id, value)
             return
 
-        if sensor.alarm_state in (AlarmState.NORMAL, AlarmState.CLEARED):
-            if delay > 0:
-                self._transition_to_pending(session, sensor, triggered_level, timestamp, measurement_id)
-                return
+        # If we're in some other state, transition to pending/active as appropriate
+        if delay > 0:
+            self._transition_to_pending(session, sensor, target_pending, timestamp, measurement_id, value, high if is_high else low)
+        else:
+            self._activate_alarm(session, sensor, target_state, timestamp, measurement_id, value, high if is_high else low)
 
-            self._transition_state(
-                session,
-                sensor,
-                AlarmState.ACTIVE,
-                triggered_level,
-                measurement_id,
-                f"Alarm activated: {triggered_level}",
-            )
-            logger.info("Alarm activated for sensor %s", sensor.id)
-            return
+    def _clear_any_alarm(self, session, sensor: Sensor, measurement_id: Optional[int], message: str) -> None:
+        """Clear any non-normal alarm state."""
+        if sensor.alarm_state != AlarmState.NORMAL:
+            self._clear_alarm(session, sensor, measurement_id, message)
+        if sensor.alarm_no_data_state == AlarmState.NO_DATA:
+            self._clear_no_data(session, sensor, measurement_id)
 
-    def _handle_clear_if_needed(
-        self,
-        session,
-        sensor: Sensor,
-        value: float,
-        hysteresis: float,
-        measurement_id: Optional[int],
-    ) -> None:
-        if sensor.alarm_state in (AlarmState.NORMAL, AlarmState.CLEARED):
-            return
+    def _clear_alarm(self, session, sensor: Sensor, measurement_id: Optional[int], message: str) -> None:
+        old_state = sensor.alarm_state
+        old_level = sensor.alarm_level
+        sensor.alarm_state = AlarmState.NORMAL
+        sensor.alarm_level = None
+        sensor.alarm_pending_since = None
+        session.commit()
 
-        if sensor.alarm_level == AlarmLevel.HIGH:
-            threshold = (sensor.alarm_high or 0.0) - hysteresis
-            if value <= threshold:
-                self._transition_state(
-                    session,
-                    sensor,
-                    AlarmState.CLEARED,
-                    None,
-                    measurement_id,
-                    "Alarm cleared",
-                )
-                logger.info("Alarm cleared for sensor %s", sensor.id)
-        elif sensor.alarm_level == AlarmLevel.LOW:
-            threshold = (sensor.alarm_low or 0.0) + hysteresis
-            if value >= threshold:
-                self._transition_state(
-                    session,
-                    sensor,
-                    AlarmState.CLEARED,
-                    None,
-                    measurement_id,
-                    "Alarm cleared",
-                )
-                logger.info("Alarm cleared for sensor %s", sensor.id)
+        # Update alarm event if exists
+        if old_state in (AlarmState.PENDING_HIGH, AlarmState.PENDING_LOW,
+                         AlarmState.ALARM_HIGH, AlarmState.ALARM_LOW):
+            self._update_alarm_event_cleared(session, sensor, old_level)
+
+        self._create_alarm_event(session, sensor, measurement_id, AlarmState.CLEARED, old_level or "", message)
+        self._publish_alarm_event(sensor, measurement_id, AlarmState.NORMAL, None, message)
+        logger.info("Alarm cleared for sensor %s: %s", sensor.id, message)
+
+    def _clear_no_data(self, session, sensor: Sensor, measurement_id: Optional[int]) -> None:
+        sensor.alarm_no_data_state = AlarmState.NORMAL
+        sensor.alarm_no_data_since = None
+        session.commit()
+        self._update_alarm_event_cleared(session, sensor, AlarmState.NO_DATA)
+        self._create_alarm_event(session, sensor, measurement_id, AlarmState.CLEARED, AlarmState.NO_DATA, "No-data alarm cleared")
+        self._publish_alarm_event(sensor, measurement_id, AlarmState.NORMAL, None, "No-data alarm cleared")
+        logger.info("No-data alarm cleared for sensor %s", sensor.id)
 
     def _transition_to_pending(
         self,
         session,
         sensor: Sensor,
-        level: str,
+        pending_state: str,
         timestamp: datetime,
         measurement_id: Optional[int],
+        value: float,
+        threshold: Optional[float],
     ) -> None:
-        sensor.alarm_state = AlarmState.PENDING
-        sensor.alarm_level = level
+        sensor.alarm_state = pending_state
+        sensor.alarm_level = AlarmState.ALARM_HIGH if "HIGH" in pending_state else AlarmState.ALARM_LOW
         sensor.alarm_pending_since = timestamp
         session.commit()
+
         self._create_alarm_event(
             session,
             sensor,
             measurement_id,
-            AlarmState.PENDING,
-            level,
-            f"Alarm pending: {level}",
+            pending_state,
+            sensor.alarm_level,
+            f"Alarm pending: {sensor.alarm_level}",
+            threshold=threshold,
+            temperature=value,
+            pending_start=timestamp,
         )
-        self._publish_alarm_event(sensor, measurement_id, AlarmState.PENDING, level, f"Alarm pending: {level}")
+        self._publish_alarm_event(sensor, measurement_id, pending_state, sensor.alarm_level, f"Alarm pending: {sensor.alarm_level}")
+        logger.info("Alarm pending for sensor %s: %s", sensor.id, sensor.alarm_level)
 
-    def _transition_state(
+    def _activate_alarm(
         self,
         session,
         sensor: Sensor,
-        state: str,
-        level: Optional[str],
+        active_state: str,
+        timestamp: datetime,
         measurement_id: Optional[int],
-        message: str,
+        value: float,
+        threshold: Optional[float],
     ) -> None:
-        sensor.alarm_state = state
-        sensor.alarm_level = level
+        sensor.alarm_state = active_state
+        sensor.alarm_level = AlarmState.ALARM_HIGH if "HIGH" in active_state else AlarmState.ALARM_LOW
         sensor.alarm_pending_since = None
         session.commit()
-        self._create_alarm_event(session, sensor, measurement_id, state, level, message)
-        self._publish_alarm_event(sensor, measurement_id, state, level, message)
+
+        # Update the pending event to activated
+        self._update_alarm_event_activated(session, sensor, timestamp)
+
+        self._create_alarm_event(
+            session,
+            sensor,
+            measurement_id,
+            active_state,
+            sensor.alarm_level,
+            f"Alarm activated: {sensor.alarm_level}",
+            threshold=threshold,
+            temperature=value,
+            activated_at=timestamp,
+        )
+        self._publish_alarm_event(sensor, measurement_id, active_state, sensor.alarm_level, f"Alarm activated: {sensor.alarm_level}")
+        logger.info("Alarm activated for sensor %s: %s", sensor.id, sensor.alarm_level)
+
+    def _activate_no_data(self, session, sensor: Sensor, timestamp: datetime) -> None:
+        sensor.alarm_no_data_state = AlarmState.NO_DATA
+        sensor.alarm_no_data_since = timestamp
+        session.commit()
+
+        self._create_alarm_event(
+            session,
+            sensor,
+            None,
+            AlarmState.NO_DATA,
+            AlarmState.NO_DATA,
+            "No data received",
+            activated_at=timestamp,
+        )
+        self._publish_alarm_event(sensor, None, AlarmState.NO_DATA, AlarmState.NO_DATA, "No data received")
+        logger.info("No-data alarm activated for sensor %s", sensor.id)
+
+    def _update_alarm_temperature(self, session, sensor: Sensor, measurement_id: Optional[int], value: float) -> None:
+        """Update the latest temperature for an active alarm event."""
+        # Find the latest active alarm event and update its temperature
+        latest = (
+            session.query(AlarmEvent)
+            .filter(
+                AlarmEvent.sensor_id == sensor.id,
+                AlarmEvent.state.in_([AlarmState.ALARM_HIGH, AlarmState.ALARM_LOW]),
+            )
+            .order_by(AlarmEvent.id.desc())
+            .first()
+        )
+        if latest is not None:
+            latest.temperature = value
+            session.commit()
+
+    def _update_alarm_event_activated(self, session, sensor: Sensor, timestamp: datetime) -> None:
+        """Update the pending alarm event with activation timestamp."""
+        latest = (
+            session.query(AlarmEvent)
+            .filter(
+                AlarmEvent.sensor_id == sensor.id,
+                AlarmEvent.state.in_([AlarmState.PENDING_HIGH, AlarmState.PENDING_LOW]),
+            )
+            .order_by(AlarmEvent.id.desc())
+            .first()
+        )
+        if latest is not None:
+            latest.state = AlarmState.ALARM_HIGH if "HIGH" in latest.alarm_type else AlarmState.ALARM_LOW
+            latest.activated_at = timestamp
+            session.commit()
+
+    def _update_alarm_event_cleared(self, session, sensor: Sensor, alarm_type: Optional[str]) -> None:
+        """Update the active/pending alarm event with clear timestamp."""
+        if alarm_type is None:
+            return
+        states = [AlarmState.PENDING_HIGH, AlarmState.PENDING_LOW, AlarmState.ALARM_HIGH, AlarmState.ALARM_LOW, AlarmState.NO_DATA]
+        latest = (
+            session.query(AlarmEvent)
+            .filter(
+                AlarmEvent.sensor_id == sensor.id,
+                AlarmEvent.state.in_(states),
+            )
+            .order_by(AlarmEvent.id.desc())
+            .first()
+        )
+        if latest is not None:
+            latest.state = AlarmState.CLEARED
+            latest.cleared_at = datetime.now(UTC)
+            session.commit()
 
     def _create_alarm_event(
         self,
@@ -279,19 +340,37 @@ class AlarmService:
         sensor: Sensor,
         measurement_id: Optional[int],
         state: str,
-        level: Optional[str],
+        alarm_type: str,
         message: str,
+        threshold: Optional[float] = None,
+        temperature: Optional[float] = None,
+        pending_start: Optional[datetime] = None,
+        activated_at: Optional[datetime] = None,
     ) -> None:
         alarm = Alarm(
             device_id=sensor.device_id,
             sensor_id=sensor.id,
             measurement_id=measurement_id,
-            level=level or "",
+            level=alarm_type or "",
             state=state,
             message=message,
-            active=state in (AlarmState.PENDING, AlarmState.ACTIVE, AlarmState.ACKNOWLEDGED),
+            active=state not in (AlarmState.NORMAL, AlarmState.CLEARED),
         )
         session.add(alarm)
+        session.commit()
+
+        # Also create AlarmEvent for history
+        event = AlarmEvent(
+            sensor_id=sensor.id,
+            device_id=sensor.device_id,
+            alarm_type=alarm_type or state,
+            threshold=threshold,
+            temperature=temperature,
+            state=state,
+            pending_start=pending_start,
+            activated_at=activated_at,
+        )
+        session.add(event)
         session.commit()
 
     def _publish_alarm_event(
@@ -302,7 +381,9 @@ class AlarmService:
         level: Optional[str],
         message: str,
     ) -> None:
-        if state not in (AlarmState.PENDING, AlarmState.ACTIVE, AlarmState.CLEARED):
+        if state not in (AlarmState.PENDING_HIGH, AlarmState.PENDING_LOW,
+                         AlarmState.ALARM_HIGH, AlarmState.ALARM_LOW,
+                         AlarmState.NO_DATA, AlarmState.NORMAL, AlarmState.CLEARED):
             return
 
         event_bus.publish(
@@ -314,11 +395,18 @@ class AlarmService:
                     "sensor_id": sensor.id,
                     "measurement_id": measurement_id,
                     "state": state,
+                    "alarm_state": state,
                     "level": level,
                     "message": message,
                 },
             )
         )
+
+    @staticmethod
+    def _normalize_timestamp(timestamp: datetime) -> datetime:
+        if timestamp.tzinfo is None:
+            return timestamp.replace(tzinfo=UTC)
+        return timestamp.astimezone(UTC)
 
 
 alarm_service = AlarmService()

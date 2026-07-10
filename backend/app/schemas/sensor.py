@@ -30,6 +30,8 @@ class SensorAlarmUpdate(BaseModel):
 	alarm_high: Optional[float] = None
 	alarm_hysteresis: float = Field(default=0.0, ge=0)
 	alarm_activation_delay: int = Field(default=0, ge=0)
+	alarm_no_data_enabled: bool = False
+	alarm_no_data_timeout: int = Field(default=15, ge=1, le=1440)
 
 
 class SensorRead(BaseModel):
@@ -50,6 +52,8 @@ class SensorRead(BaseModel):
 	alarm_state: str
 	alarm_level: Optional[str]
 	alarm_pending_since: Optional[datetime]
+	alarm_no_data_enabled: bool
+	alarm_no_data_timeout: int
 	created_at: Optional[datetime]
 	last_value: Optional[float]
 	last_measurement: Optional[datetime]

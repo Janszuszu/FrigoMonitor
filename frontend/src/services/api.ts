@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import type { Device, Measurement, NetworkSettings, Sensor, SystemHealth } from "@/types";
+import type { AlarmSettings, ActiveAlarm, AlarmHistoryItem, Device, Measurement, NetworkSettings, Sensor, SystemHealth } from "@/types";
 
 export interface MeasurementHistoryParams {
   sensorId?: number;
@@ -93,5 +93,30 @@ export async function updateDeviceName(deviceId: number, displayName: string): P
 
 export async function fetchSystemNetwork(): Promise<NetworkSettings> {
   const response = await api.get<NetworkSettings>("/system/network");
+  return response.data;
+}
+
+export async function fetchAlarmSettings(): Promise<AlarmSettings[]> {
+  const response = await api.get<AlarmSettings[]>("/alarms/settings");
+  return response.data;
+}
+
+export async function updateAlarmSettings(sensorId: number, data: Partial<AlarmSettings>): Promise<AlarmSettings> {
+  const response = await api.put<AlarmSettings>(`/alarms/settings/${sensorId}`, data);
+  return response.data;
+}
+
+export async function fetchActiveAlarms(): Promise<ActiveAlarm[]> {
+  const response = await api.get<ActiveAlarm[]>("/alarms/active");
+  return response.data;
+}
+
+export async function fetchAlarmHistory(sensorId?: number, limit = 100): Promise<AlarmHistoryItem[]> {
+  const params = new URLSearchParams();
+  if (sensorId !== undefined) {
+    params.set("sensor_id", String(sensorId));
+  }
+  params.set("limit", String(limit));
+  const response = await api.get<AlarmHistoryItem[]>(`/alarms/history?${params.toString()}`);
   return response.data;
 }

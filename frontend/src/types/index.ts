@@ -23,10 +23,13 @@ export interface Sensor {
   correction?: number | null;
   alarm_state: string;
   alarm_level?: string | null;
+  alarm_no_data_enabled: boolean;
+  alarm_no_data_timeout: number;
   last_value?: number | null;
   last_measurement?: string | null;
   unit?: string | null;
 }
+
 
 export interface Measurement {
   id: number;
@@ -62,8 +65,61 @@ export interface NetworkSettings {
   frontend_origins: string[];
 }
 
+export interface AlarmSettings {
+  sensor_id: number;
+  device_id: number;
+  sensor_name: string;
+  device_name: string;
+  device_display_name: string | null;
+  current_temperature: number | null;
+  alarm_enabled: boolean;
+  alarm_low: number | null;
+  alarm_high: number | null;
+  alarm_activation_delay: number;
+  alarm_state: string;
+  alarm_level: string | null;
+  alarm_no_data_enabled: boolean;
+  alarm_no_data_timeout: number;
+}
+
+export interface ActiveAlarm {
+  id: number;
+  sensor_id: number;
+  device_id: number | null;
+  alarm_type: string;
+  threshold: number | null;
+  temperature: number | null;
+  state: string;
+  pending_start: string | null;
+  activated_at: string | null;
+  cleared_at: string | null;
+  created_at: string | null;
+  sensor_name: string;
+  device_name: string;
+  device_display_name: string | null;
+}
+
+export interface AlarmHistoryItem {
+  id: number;
+  sensor_id: number;
+  device_id: number | null;
+  alarm_type: string;
+  threshold: number | null;
+  temperature: number | null;
+  state: string;
+  pending_start: string | null;
+  activated_at: string | null;
+  cleared_at: string | null;
+  created_at: string | null;
+  sensor_name: string;
+  device_name: string;
+  device_display_name: string | null;
+}
+
 export interface LiveEvent {
   event?: string;
   timestamp?: string;
   payload?: Record<string, unknown> | null;
 }
+
+
