@@ -1,7 +1,7 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 
-import { fetchDevices } from "@/services/api";
+import { fetchDevices, updateDeviceName } from "@/services/api";
 import type { Device } from "@/types";
 import { parseApiTimestampMillis } from "@/utils/time";
 
@@ -54,6 +54,10 @@ export const useDevicesStore = defineStore("devices", () => {
         payload.name !== undefined
           ? String(payload.name)
           : current?.name || "Unknown device",
+      display_name:
+        payload.display_name !== undefined
+          ? (payload.display_name ? String(payload.display_name) : null)
+          : current?.display_name || null,
       serial_number:
         payload.serial_number !== undefined
           ? (payload.serial_number ? String(payload.serial_number) : null)
@@ -99,6 +103,17 @@ export const useDevicesStore = defineStore("devices", () => {
     items.value.unshift(next);
   }
 
+  async function updateName(deviceId: number, displayName: string): Promise<void> {
+    const updated = await updateDeviceName(deviceId, displayName);
+    const index = items.value.findIndex((item) => item.id === deviceId);
+    if (index >= 0) {
+      items.value[index] = {
+        ...items.value[index],
+        display_name: updated.display_name,
+      };
+    }
+  }
+
   return {
     items,
     loading,
@@ -106,5 +121,6 @@ export const useDevicesStore = defineStore("devices", () => {
     onlineCount,
     load,
     upsertFromLive,
+    updateName,
   };
 });

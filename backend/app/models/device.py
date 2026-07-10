@@ -11,6 +11,7 @@ class Device(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     name = Column(String(100), nullable=False)
+    display_name = Column(String(100), nullable=True)
     serial_number = Column(String(100), unique=True, index=True)
     device_id = Column(String(100), unique=True, index=True, nullable=True)
     location = Column(String(200))

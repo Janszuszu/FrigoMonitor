@@ -86,6 +86,11 @@ export async function updateSensor(sensorId: number, data: Partial<Sensor>): Pro
   return response.data;
 }
 
+export async function updateDeviceName(deviceId: number, displayName: string): Promise<Device> {
+  const response = await api.put<Device>(`/devices/${deviceId}`, { display_name: displayName });
+  return response.data;
+}
+
 export async function fetchSystemNetwork(): Promise<NetworkSettings> {
   const response = await api.get<NetworkSettings>("/system/network");
   return response.data;

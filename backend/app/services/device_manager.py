@@ -412,6 +412,7 @@ class DeviceManager:
                     payload={
                         "id": device.id,
                         "name": device.name,
+                        "display_name": device.display_name,
                         "serial_number": device.serial_number,
                         "device_id": device.device_id,
                         "last_seen": device.last_seen.isoformat() if device.last_seen else None,

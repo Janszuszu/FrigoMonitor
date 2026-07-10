@@ -49,7 +49,10 @@ def update_device(device_id: int, payload: DeviceUpdate, db: Session = Depends(g
         if existing is not None:
             raise HTTPException(status_code=409, detail='Device serial_number already exists')
 
-    for field, value in payload.dict(exclude_unset=True).items():
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        # Trim whitespace from string fields
+        if isinstance(value, str):
+            value = value.strip()
         setattr(device, field, value)
 
     db.commit()

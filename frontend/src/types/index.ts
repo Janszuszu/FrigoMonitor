@@ -1,6 +1,7 @@
 export interface Device {
   id: number;
   name: string;
+  display_name?: string | null;
   serial_number: string | null;
   device_id?: string | null;
   location: string | null;

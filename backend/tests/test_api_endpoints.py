@@ -296,6 +296,73 @@ def test_sensor_rename_does_not_affect_other_fields():
     assert data["id"] == sensor_id
 
 
+def test_device_display_name_update():
+    """Test device display_name update via PUT /api/v1/devices/{device_id}."""
+    with SessionLocal() as s:
+        dev = Device(name="DisplayNameTest", serial_number="DISP-1")
+        s.add(dev)
+        s.commit()
+        s.refresh(dev)
+        dev_id = dev.id
+
+    # Initial state: display_name should be None
+    r = client.get(f"/api/v1/devices/{dev_id}")
+    assert r.status_code == 200
+    assert r.json()["display_name"] is None
+
+    # Set display_name
+    r = client.put(f"/api/v1/devices/{dev_id}", json={"display_name": "My Custom Name"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["display_name"] == "My Custom Name"
+    assert data["id"] == dev_id
+    assert data["name"] == "DisplayNameTest"  # original name unchanged
+
+    # Verify persistence
+    r = client.get(f"/api/v1/devices/{dev_id}")
+    assert r.status_code == 200
+    assert r.json()["display_name"] == "My Custom Name"
+
+    # Whitespace trimming
+    r = client.put(f"/api/v1/devices/{dev_id}", json={"display_name": "  Trimmed Name  "})
+    assert r.status_code == 200
+    assert r.json()["display_name"] == "Trimmed Name"
+
+    # Empty name rejection
+    r = client.put(f"/api/v1/devices/{dev_id}", json={"display_name": ""})
+    assert r.status_code == 422
+
+    # Whitespace-only name rejection
+    r = client.put(f"/api/v1/devices/{dev_id}", json={"display_name": "   "})
+    assert r.status_code == 422
+
+    # Nonexistent device returns 404
+    r = client.put("/api/v1/devices/99999", json={"display_name": "Ghost"})
+    assert r.status_code == 404
+
+    # Sensors and measurements remain associated
+    with SessionLocal() as s:
+        sensor = Sensor(device_id=dev_id, name="probe_1")
+        s.add(sensor)
+        s.commit()
+        s.refresh(sensor)
+        sensor_id = sensor.id
+        base = datetime.now(UTC)
+        m = Measurement(sensor_id=sensor_id, measured_at=base, value=12.5)
+        s.add(m)
+        s.commit()
+
+    r = client.get(f"/api/v1/sensors?device_id={dev_id}")
+    assert r.status_code == 200
+    sensors = r.json()
+    assert any(s["device_id"] == dev_id for s in sensors)
+
+    r = client.get(f"/api/v1/measurements/history?sensor_id={sensor_id}&limit=10")
+    assert r.status_code == 200
+    hist = r.json()
+    assert all(m["sensor_id"] == sensor_id for m in hist)
+
+
 def test_network_settings_endpoints():
     r = client.get("/api/v1/system/network")
     assert r.status_code == 200
