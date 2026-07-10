@@ -29,7 +29,10 @@ def update_sensor(sensor_id: int, payload: SensorUpdate, db: Session = Depends(g
     if sensor is None:
         raise HTTPException(status_code=404, detail='Sensor not found')
 
-    for field, value in payload.dict(exclude_unset=True).items():
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        # Trim whitespace from string fields
+        if isinstance(value, str):
+            value = value.strip()
         setattr(sensor, field, value)
 
     db.commit()

@@ -208,6 +208,94 @@ def test_sensors_endpoints_and_measurements():
     assert len(downsampled) <= 100
 
 
+def test_sensor_rename():
+    """Test sensor rename via PUT /api/v1/sensors/{sensor_id}."""
+    with SessionLocal() as s:
+        dev = Device(name="RenameTest", serial_number="REN-1")
+        s.add(dev)
+        s.commit()
+        s.refresh(dev)
+        sensor = Sensor(device_id=dev.id, name="Old Name", rom="ABCD1234")
+        s.add(sensor)
+        s.commit()
+        s.refresh(sensor)
+        sensor_id = sensor.id
+
+    # Successful rename
+    r = client.put(f"/api/v1/sensors/{sensor_id}", json={"name": "New Name"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["name"] == "New Name"
+    assert data["id"] == sensor_id
+
+    # Verify persistence
+    r = client.get(f"/api/v1/sensors/{sensor_id}")
+    assert r.status_code == 200
+    assert r.json()["name"] == "New Name"
+
+    # Whitespace trimming
+    r = client.put(f"/api/v1/sensors/{sensor_id}", json={"name": "  Trimmed Name  "})
+    assert r.status_code == 200
+    assert r.json()["name"] == "Trimmed Name"
+
+    # Empty name rejection
+    r = client.put(f"/api/v1/sensors/{sensor_id}", json={"name": ""})
+    assert r.status_code == 422
+
+    # Whitespace-only name rejection
+    r = client.put(f"/api/v1/sensors/{sensor_id}", json={"name": "   "})
+    assert r.status_code == 422
+
+    # Nonexistent sensor returns 404
+    r = client.put("/api/v1/sensors/99999", json={"name": "Ghost"})
+    assert r.status_code == 404
+
+    # Historical measurements remain associated after rename
+    base = datetime.now(UTC)
+    with SessionLocal() as s:
+        m = Measurement(sensor_id=sensor_id, measured_at=base, value=12.5)
+        s.add(m)
+        s.commit()
+
+    r = client.get(f"/api/v1/measurements/history?sensor_id={sensor_id}&limit=10")
+    assert r.status_code == 200
+    hist = r.json()
+    assert all(m["sensor_id"] == sensor_id for m in hist)
+
+
+def test_sensor_rename_does_not_affect_other_fields():
+    """Renaming only changes the name field, other fields remain intact."""
+    with SessionLocal() as s:
+        dev = Device(name="OtherFields", serial_number="OTH-1")
+        s.add(dev)
+        s.commit()
+        s.refresh(dev)
+        sensor = Sensor(
+            device_id=dev.id,
+            name="Original",
+            sensor_id="sns-001",
+            rom="ROM001",
+            unit="C",
+            sensor_type="DS18B20",
+            correction=0.5,
+        )
+        s.add(sensor)
+        s.commit()
+        s.refresh(sensor)
+        sensor_id = sensor.id
+
+    r = client.put(f"/api/v1/sensors/{sensor_id}", json={"name": "Renamed"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["name"] == "Renamed"
+    assert data["sensor_id"] == "sns-001"
+    assert data["rom"] == "ROM001"
+    assert data["unit"] == "C"
+    assert data["sensor_type"] == "DS18B20"
+    assert data["correction"] == 0.5
+    assert data["id"] == sensor_id
+
+
 def test_network_settings_endpoints():
     r = client.get("/api/v1/system/network")
     assert r.status_code == 200

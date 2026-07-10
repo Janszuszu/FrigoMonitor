@@ -81,6 +81,11 @@ export async function fetchSystem(): Promise<SystemHealth> {
   }
 }
 
+export async function updateSensor(sensorId: number, data: Partial<Sensor>): Promise<Sensor> {
+  const response = await api.put<Sensor>(`/sensors/${sensorId}`, data);
+  return response.data;
+}
+
 export async function fetchSystemNetwork(): Promise<NetworkSettings> {
   const response = await api.get<NetworkSettings>("/system/network");
   return response.data;

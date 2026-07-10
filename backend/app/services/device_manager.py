@@ -302,12 +302,9 @@ class DeviceManager:
                     sensor.sensor_id = value
                     changed = True
 
-            if "name" in data and data.get("name") is not None:
-                value = str(data.get("name"))
-                if sensor.name != value:
-                    sensor.name = value
-                    changed = True
-
+            # Never overwrite an existing sensor name during automatic
+            # registration.  The user may have customised it via the UI.
+            # Only set the name on initial creation (above).
             if rom is not None and sensor.rom != rom:
                 sensor.rom = rom
                 changed = True

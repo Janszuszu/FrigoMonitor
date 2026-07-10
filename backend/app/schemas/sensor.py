@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -16,6 +16,13 @@ class SensorUpdate(BaseModel):
 	address: Optional[str] = Field(default=None, max_length=100)
 	correction: Optional[float] = None
 
+	@field_validator("name")
+	@classmethod
+	def name_not_blank(cls, v: Optional[str]) -> Optional[str]:
+		if v is not None and v.strip() == "":
+			raise ValueError("Name must not be blank")
+		return v
+
 
 class SensorAlarmUpdate(BaseModel):
 	alarm_enabled: bool = True
@@ -29,8 +36,11 @@ class SensorRead(BaseModel):
 	id: int
 	device_id: int
 	name: str
+	sensor_id: Optional[str]
 	sensor_type: Optional[str]
 	address: Optional[str]
+	rom: Optional[str]
+	unit: Optional[str]
 	correction: Optional[float]
 	alarm_enabled: bool
 	alarm_low: Optional[float]
