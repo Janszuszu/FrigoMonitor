@@ -11,9 +11,14 @@ from app.logger import logger
 from app.models.telegram_settings import TelegramSettings
 from app.models.sensor import Sensor
 from app.models.device import Device
-# Track which alarm events have already sent a Telegram notification
-# to prevent duplicate notifications while an alarm remains active.
-# Key: "sensor_id:alarm_type" -> True when notification was sent
+from app.models.alarm_event import AlarmEvent
+
+# In-memory cache for notification deduplication.
+# This is NOT the source of truth -- the database is.
+# This cache is only an optimization to avoid a DB query
+# for every measurement while an alarm remains active.
+# It is safe to lose on restart because the DB field
+# (AlarmEvent.telegram_notification_sent_at) is authoritative.
 _sent_notifications: dict[str, bool] = {}
 
 
@@ -48,6 +53,48 @@ def _get_settings() -> tuple[bool, str, str]:
         app_settings.TELEGRAM_BOT_TOKEN,
         app_settings.TELEGRAM_CHAT_ID,
     )
+
+
+def _has_notification_been_sent(session, sensor_id: int, alarm_type: str) -> bool:
+    """Check the database to see if a Telegram notification was already sent
+    for the currently active alarm event of this type on this sensor.
+    
+    The database is the source of truth.  This checks the latest active
+    (non-cleared) AlarmEvent for the given sensor and alarm type.
+    """
+    active_states = ["ALARM_HIGH", "ALARM_LOW", "NO_DATA", "PENDING_HIGH", "PENDING_LOW"]
+    latest = (
+        session.query(AlarmEvent)
+        .filter(
+            AlarmEvent.sensor_id == sensor_id,
+            AlarmEvent.alarm_type == alarm_type,
+            AlarmEvent.state.in_(active_states),
+        )
+        .order_by(AlarmEvent.id.desc())
+        .first()
+    )
+    if latest is None:
+        return False
+    return latest.telegram_notification_sent_at is not None
+
+
+def _mark_notification_sent(session, sensor_id: int, alarm_type: str) -> None:
+    """Persist the fact that a Telegram notification was sent for the
+    currently active alarm event."""
+    active_states = ["ALARM_HIGH", "ALARM_LOW", "NO_DATA", "PENDING_HIGH", "PENDING_LOW"]
+    latest = (
+        session.query(AlarmEvent)
+        .filter(
+            AlarmEvent.sensor_id == sensor_id,
+            AlarmEvent.alarm_type == alarm_type,
+            AlarmEvent.state.in_(active_states),
+        )
+        .order_by(AlarmEvent.id.desc())
+        .first()
+    )
+    if latest is not None:
+        latest.telegram_notification_sent_at = datetime.now(UTC)
+        session.commit()
 
 
 def send_telegram_message(text: str, bot_token: str, chat_id: str, timeout_seconds: int = 10) -> tuple[bool, str]:
@@ -116,7 +163,11 @@ def send_alarm_notification(
     """Send a Telegram notification for an alarm activation.
     
     Only sends when the alarm transitions from non-active to ACTIVE.
-    Prevents duplicate notifications while the alarm remains active.
+    Uses the database (AlarmEvent.telegram_notification_sent_at) as the
+    source of truth for deduplication, so notifications are never
+    duplicated across restarts.
+    
+    An in-memory cache is used as a fast-path optimization only.
     """
     # Lazy import to avoid circular dependency
     from app.services.alarm_service import AlarmState
@@ -135,10 +186,24 @@ def send_alarm_notification(
     else:
         return  # Only send for active alarms, not pending
 
-    # Check if we already sent a notification for this active alarm
+    # Fast-path: check in-memory cache first (optimization only)
     if _sent_notifications.get(dedup_key):
-        logger.debug("Telegram notification already sent for %s, skipping", dedup_key)
+        logger.debug("Telegram notification already sent for %s (cache)", dedup_key)
         return
+
+    # Authoritative check: query the database
+    try:
+        with SessionLocal() as session:
+            if _has_notification_been_sent(session, sensor.id, alarm_type):
+                _sent_notifications[dedup_key] = True  # populate cache
+                logger.debug("Telegram notification already sent for %s (DB)", dedup_key)
+                return
+    except SQLAlchemyError:
+        logger.exception("Failed to check Telegram notification state in DB")
+        # On DB error, fall through cautiously: do not send duplicate
+        # if the cache says we already sent one
+        if _sent_notifications.get(dedup_key):
+            return
 
     device_name = device.display_name or device.name if device else "Unknown"
     sensor_name = sensor.name
@@ -184,15 +249,33 @@ def send_alarm_notification(
     success, err_msg = send_telegram_message(text, bot_token, chat_id)
     if success:
         _sent_notifications[dedup_key] = True
-        logger.info("Telegram alarm notification sent for %s", dedup_key)
+        # Persist to database
+        try:
+            with SessionLocal() as session:
+                _mark_notification_sent(session, sensor.id, alarm_type)
+        except SQLAlchemyError:
+            logger.exception("Failed to persist Telegram notification state in DB")
+        logger.info(
+            "Telegram alarm notification sent for sensor=%s alarm_type=%s",
+            sensor.id, alarm_type,
+        )
     else:
-        logger.error("Failed to send Telegram alarm notification for %s: %s", dedup_key, err_msg)
+        logger.error(
+            "Failed to send Telegram alarm notification for sensor=%s alarm_type=%s: %s",
+            sensor.id, alarm_type, err_msg,
+        )
 
 
 def clear_notification_tracking(sensor_id: int, alarm_type: str) -> None:
     """Clear the notification tracking for a resolved alarm.
     
     This allows a new notification to be sent if the alarm becomes active again.
+    The database field (telegram_notification_sent_at) is NOT cleared here --
+    it stays as a historical record.  A new alarm event will have its own
+    row with telegram_notification_sent_at=NULL, so a new notification
+    will be allowed.
+    
+    Only the in-memory cache is cleared.
     """
     # Lazy import to avoid circular dependency
     from app.services.alarm_service import AlarmState
@@ -219,6 +302,10 @@ def clear_notification_tracking(sensor_id: int, alarm_type: str) -> None:
 
 
 def clear_all_notification_tracking() -> None:
-    """Clear all notification tracking (e.g., on bulk reset)."""
+    """Clear all notification tracking (e.g., on bulk reset).
+    
+    Only clears the in-memory cache.  The database field on historical
+    alarm events is preserved.
+    """
     _sent_notifications.clear()
     logger.debug("Cleared all Telegram notification tracking")

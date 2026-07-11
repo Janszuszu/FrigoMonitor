@@ -21,6 +21,7 @@ class AlarmEvent(Base):
     pending_start = Column(DateTime(timezone=True), nullable=True)
     activated_at = Column(DateTime(timezone=True), nullable=True)
     cleared_at = Column(DateTime(timezone=True), nullable=True)
+    telegram_notification_sent_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

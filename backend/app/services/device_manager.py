@@ -302,9 +302,14 @@ class DeviceManager:
                     sensor.sensor_id = value
                     changed = True
 
-            # Never overwrite an existing sensor name during automatic
-            # registration.  The user may have customised it via the UI.
-            # Only set the name on initial creation (above).
+            # Update the sensor name if explicitly provided in the
+            # registration payload.  This handles the case where an
+            # ESP32 re-registers with an updated name (e.g. after a
+            # firmware update or reconfiguration).
+            if sensor_name is not None and sensor.name != sensor_name:
+                sensor.name = sensor_name
+                changed = True
+
             if rom is not None and sensor.rom != rom:
                 sensor.rom = rom
                 changed = True
