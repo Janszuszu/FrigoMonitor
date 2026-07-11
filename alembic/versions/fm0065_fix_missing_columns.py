@@ -19,7 +19,7 @@ def upgrade():
     conn = op.get_bind()
 
     # Check if columns already exist in sensors table
-    existing_columns = [row[1] for row in conn.execute("PRAGMA table_info('sensors')").fetchall()]
+    existing_columns = [row[1] for row in conn.execute(sa.text("PRAGMA table_info('sensors')")).fetchall()]
 
     # Add no_data alarm columns to sensors using direct SQL (avoid batch_alter_table which creates temp tables)
     if "alarm_no_data_enabled" not in existing_columns:
@@ -32,7 +32,7 @@ def upgrade():
         conn.execute(sa.text("ALTER TABLE sensors ADD COLUMN alarm_no_data_state VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"))
 
     # Create alarm_events table if not exists
-    existing_tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    existing_tables = [row[0] for row in conn.execute(sa.text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()]
     if "alarm_events" not in existing_tables:
         op.create_table(
             "alarm_events",
@@ -53,9 +53,8 @@ def upgrade():
 def downgrade():
     op.drop_table("alarm_events")
     conn = op.get_bind()
-    existing_columns = [row[1] for row in conn.execute("PRAGMA table_info('sensors')").fetchall()]
+    existing_columns = [row[1] for row in conn.execute(sa.text("PRAGMA table_info('sensors')")).fetchall()]
     if "alarm_no_data_state" in existing_columns:
-        # SQLite doesn't support DROP COLUMN in older versions, but newer ones do
         conn.execute(sa.text("ALTER TABLE sensors DROP COLUMN alarm_no_data_state"))
     if "alarm_no_data_since" in existing_columns:
         conn.execute(sa.text("ALTER TABLE sensors DROP COLUMN alarm_no_data_since"))
