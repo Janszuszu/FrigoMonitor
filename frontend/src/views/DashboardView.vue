@@ -97,6 +97,17 @@ const livePoints = computed(() => {
 
 const trendPoints = computed(() => (isLive.value ? livePoints.value : historyPoints.value));
 
+// ─── Alarm thresholds for selected sensor ───
+const selectedThresholds = computed(() => {
+  if (selectedSensorId.value === null) return null;
+  const alarmSetting = alarmsStore.settings.find((s) => s.sensor_id === selectedSensorId.value);
+  if (!alarmSetting) return null;
+  return {
+    min: alarmSetting.alarm_low,
+    max: alarmSetting.alarm_high,
+  };
+});
+
 function localDateTimeToIso(value: string): string | null {
   if (!value) {
     return null;
@@ -205,7 +216,13 @@ function onFullscreenChange(): void {
 
 onMounted(async () => {
   try {
-    await Promise.all([systemStore.load(), devicesStore.load(), sensorsStore.load(), measurementsStore.load()]);
+    await Promise.all([
+      systemStore.load(),
+      devicesStore.load(),
+      sensorsStore.load(),
+      measurementsStore.load(),
+      alarmsStore.loadSettings(),
+    ]);
     await loadTrendHistory();
   } catch (error) {
     console.error("Failed to load dashboard", error);
@@ -219,14 +236,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="space-y-3">
-    <!-- Sensor Trend section - directly at the top -->
-    <section class="space-y-2">
-      <!-- Header row: Sensor Trend title + sensor selector -->
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-base font-semibold text-fm-text">
+  <section class="space-y-6">
+    <!-- Sensor Trend section at the very top -->
+    <section class="space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <h3 class="text-lg font-semibold text-fm-text">
           Sensor Trend
-        </h2>
+        </h3>
 
         <label class="flex items-center gap-2 text-xs text-fm-muted">
           Sensor:
@@ -264,6 +280,7 @@ onBeforeUnmount(() => {
           :live-mode="isLive"
           :sensor-label="selectedSensorLabel"
           :fullscreen="isFullscreen"
+          :thresholds="selectedThresholds"
           @toggle-fullscreen="toggleFullscreen"
         />
 
@@ -330,9 +347,29 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <!-- Source and samples info -->
-    <div class="grid gap-3 md:grid-cols-2">
-      <article class="rounded-lg border border-slate-800 bg-fm-panelSoft px-3 py-2 text-xs text-fm-muted">
+    <!-- Four summary cards: compact, responsive grid -->
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <StatusCard
+        label="System Status"
+        :value="systemStore.health?.status || 'N/A'"
+      />
+      <StatusCard
+        label="Devices"
+        :value="devicesStore.items.length"
+      />
+      <StatusCard
+        label="Online Devices"
+        :value="devicesStore.onlineCount"
+      />
+      <StatusCard
+        label="Alarms"
+        :value="alarmsStore.count"
+        variant="alarm"
+      />
+    </div>
+
+    <div class="grid gap-4 lg:grid-cols-2">
+      <article class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted">
         Source: {{ selectedSensorLabel }}
       </article>
       <article class="rounded-lg border border-slate-800 bg-fm-panelSoft px-3 py-2 text-xs text-fm-muted">
