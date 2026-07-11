@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 
+import BottomNav from "@/components/dashboard/BottomNav.vue";
 import Sidebar from "@/components/Sidebar.vue";
 import TopBar from "@/components/TopBar.vue";
 import { useDevicesStore } from "@/stores/devices";
@@ -47,6 +48,7 @@ onMounted(async () => {
       <main class="flex-1 p-3 md:p-4">
         <RouterView />
       </main>
+      <BottomNav />
     </div>
   </div>
 </template>

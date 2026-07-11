@@ -31,9 +31,6 @@ onMounted(async () => {
       <h2 class="text-2xl font-semibold">
         Sensors
       </h2>
-      <p class="text-sm text-fm-muted">
-        Current sensor state with latest temperatures.
-      </p>
     </header>
 
     <SensorTable :sensors="rows" />

@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 
-import SensorTrendChart from "@/components/SensorTrendChart.vue";
-import StatusCard from "@/components/StatusCard.vue";
+import DashboardChart from "@/components/dashboard/DashboardChart.vue";
+import MainSensorCard from "@/components/dashboard/MainSensorCard.vue";
+import SensorSelector from "@/components/dashboard/SensorSelector.vue";
+import SummaryCards from "@/components/dashboard/SummaryCards.vue";
+import SourceInfo from "@/components/dashboard/SourceInfo.vue";
 import { fetchMeasurementHistory } from "@/services/api";
 import { useAlarmsStore } from "@/stores/alarms";
 import { useDevicesStore } from "@/stores/devices";
 import { useMeasurementsStore } from "@/stores/measurements";
 import { useSensorsStore } from "@/stores/sensors";
 import { useSystemStore } from "@/stores/system";
+import { parseApiTimestampMillis } from "@/utils/time";
 
 const devicesStore = useDevicesStore();
 const sensorsStore = useSensorsStore();
@@ -16,9 +20,9 @@ const measurementsStore = useMeasurementsStore();
 const alarmsStore = useAlarmsStore();
 const systemStore = useSystemStore();
 
+const sensorById = computed(() => new Map(sensorsStore.items.map((s) => [s.id, s])));
+const deviceById = computed(() => new Map(devicesStore.items.map((d) => [d.id, d])));
 
-const sensorById = computed(() => new Map(sensorsStore.items.map((sensor) => [sensor.id, sensor])));
-const deviceById = computed(() => new Map(devicesStore.items.map((device) => [device.id, device])));
 const selectedSensorId = ref<number | null>(null);
 const selectedRange = ref<"LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "30d" | "CUSTOM">("LIVE");
 const customFrom = ref("");
@@ -32,13 +36,13 @@ const LIVE_MAX_POINTS = 500;
 
 const rangeOptions: { key: "LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "30d" | "CUSTOM"; label: string }[] = [
   { key: "LIVE", label: "LIVE" },
-  { key: "1h", label: "1h" },
-  { key: "6h", label: "6h" },
-  { key: "24h", label: "24h" },
-  { key: "72h", label: "72h" },
-  { key: "7d", label: "7d" },
-  { key: "30d", label: "30d" },
-  { key: "CUSTOM", label: "Custom" },
+  { key: "1h", label: "1H" },
+  { key: "6h", label: "6H" },
+  { key: "24h", label: "24H" },
+  { key: "72h", label: "72H" },
+  { key: "7d", label: "7D" },
+  { key: "30d", label: "30D" },
+  { key: "CUSTOM", label: "CUSTOM" },
 ];
 
 const sensorOptions = computed(() => {
@@ -58,7 +62,6 @@ watch(
       selectedSensorId.value = null;
       return;
     }
-
     const exists = options.some((option) => option.id === selectedSensorId.value);
     if (!exists) {
       selectedSensorId.value = options[0].id;
@@ -67,19 +70,79 @@ watch(
   { immediate: true },
 );
 
-const selectedSensorLabel = computed(() => {
-  return sensorOptions.value.find((option) => option.id === selectedSensorId.value)?.label || "No sensor selected";
+// Selected sensor details
+const selectedSensor = computed(() => {
+  if (selectedSensorId.value === null) return null;
+  return sensorById.value.get(selectedSensorId.value) || null;
+});
+
+const selectedDevice = computed(() => {
+  if (!selectedSensor.value) return null;
+  return deviceById.value.get(selectedSensor.value.device_id) || null;
+});
+
+const deviceName = computed(() => {
+  return selectedDevice.value?.display_name || selectedDevice.value?.name || "—";
+});
+
+const sensorName = computed(() => {
+  return selectedSensor.value?.name || "—";
+});
+
+const currentTemp = computed(() => {
+  if (!selectedSensor.value) return null;
+  return selectedSensor.value.last_value ?? null;
+});
+
+const sensorUnit = computed(() => {
+  return selectedSensor.value?.unit || "°C";
+});
+
+const isOnline = computed(() => {
+  if (!selectedSensor.value) return false;
+  const lastMeas = parseApiTimestampMillis(selectedSensor.value.last_measurement);
+  if (lastMeas === null) return false;
+  return Date.now() - lastMeas < 10 * 60 * 1000;
+});
+
+const lastUpdate = computed(() => {
+  return selectedSensor.value?.last_measurement || null;
+});
+
+// Alarm thresholds - not available on Sensor type directly
+// These would come from AlarmSettings if needed in the future
+const alarmLow = computed(() => null);
+const alarmHigh = computed(() => null);
+// Trend (last value change)
+const trend = computed(() => {
+  if (trendPoints.value.length < 2) return null;
+  const last = trendPoints.value[trendPoints.value.length - 1].value;
+  const prev = trendPoints.value[trendPoints.value.length - 2].value;
+  return last - prev;
+});
+
+// Min, Max, Avg from chart data
+const chartMin = computed(() => {
+  if (!trendPoints.value.length) return null;
+  return Math.min(...trendPoints.value.map((p) => p.value));
+});
+
+const chartMax = computed(() => {
+  if (!trendPoints.value.length) return null;
+  return Math.max(...trendPoints.value.map((p) => p.value));
+});
+
+const chartAvg = computed(() => {
+  if (!trendPoints.value.length) return null;
+  const sum = trendPoints.value.reduce((acc, p) => acc + p.value, 0);
+  return sum / trendPoints.value.length;
 });
 
 const isLive = computed(() => selectedRange.value === "LIVE");
 
 const livePoints = computed(() => {
-  if (selectedSensorId.value === null) {
-    return [];
-  }
-
+  if (selectedSensorId.value === null) return [];
   const cutoff = Date.now() - LIVE_WINDOW_MS;
-
   return measurementsStore.items
     .filter((item) => item.sensor_id === selectedSensorId.value)
     .filter((item) => {
@@ -98,32 +161,21 @@ const livePoints = computed(() => {
 const trendPoints = computed(() => (isLive.value ? livePoints.value : historyPoints.value));
 
 function localDateTimeToIso(value: string): string | null {
-  if (!value) {
-    return null;
-  }
+  if (!value) return null;
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
+  if (Number.isNaN(date.getTime())) return null;
   return date.toISOString();
 }
 
 function buildPresetRange(range: "1h" | "6h" | "24h" | "72h" | "7d" | "30d"): { from: string; to: string } {
   const to = new Date();
   const from = new Date(to);
-  if (range === "1h") {
-    from.setHours(from.getHours() - 1);
-  } else if (range === "6h") {
-    from.setHours(from.getHours() - 6);
-  } else if (range === "24h") {
-    from.setHours(from.getHours() - 24);
-  } else if (range === "72h") {
-    from.setHours(from.getHours() - 72);
-  } else if (range === "7d") {
-    from.setDate(from.getDate() - 7);
-  } else {
-    from.setDate(from.getDate() - 30);
-  }
+  if (range === "1h") from.setHours(from.getHours() - 1);
+  else if (range === "6h") from.setHours(from.getHours() - 6);
+  else if (range === "24h") from.setHours(from.getHours() - 24);
+  else if (range === "72h") from.setHours(from.getHours() - 72);
+  else if (range === "7d") from.setDate(from.getDate() - 7);
+  else from.setDate(from.getDate() - 30);
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
@@ -191,7 +243,6 @@ const isFullscreen = ref(false);
 
 function toggleFullscreen(): void {
   if (!chartContainerRef.value) return;
-
   if (!document.fullscreenElement) {
     void chartContainerRef.value.requestFullscreen();
   } else {
@@ -205,7 +256,13 @@ function onFullscreenChange(): void {
 
 onMounted(async () => {
   try {
-    await Promise.all([systemStore.load(), devicesStore.load(), sensorsStore.load(), measurementsStore.load()]);
+    await Promise.all([
+      systemStore.load(),
+      devicesStore.load(),
+      sensorsStore.load(),
+      measurementsStore.load(),
+      alarmsStore.loadActiveAlarms(),
+    ]);
     await loadTrendHistory();
   } catch (error) {
     console.error("Failed to load dashboard", error);
@@ -219,151 +276,142 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="space-y-3">
-    <!-- Sensor Trend section - directly at the top -->
-    <section class="space-y-2">
-      <!-- Header row: Sensor Trend title + sensor selector -->
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-base font-semibold text-fm-text">
-          Sensor Trend
-        </h2>
-
-        <label class="flex items-center gap-2 text-xs text-fm-muted">
-          Sensor:
-          <select
-            v-model.number="selectedSensorId"
-            class="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-fm-text"
-          >
-            <option
-              v-for="option in sensorOptions"
-              :key="option.id"
-              :value="option.id"
-            >
-              {{ option.label }}
-            </option>
-          </select>
-        </label>
+  <div class="mx-auto max-w-6xl space-y-4">
+    <!-- Sensor Selector Row -->
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <h1 class="text-base font-bold uppercase tracking-[0.15em] text-fm-text/90">
+        Dashboard
+      </h1>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] uppercase tracking-[0.12em] text-fm-muted/60">Sensor:</span>
+        <SensorSelector v-model="selectedSensorId" />
       </div>
+    </div>
 
-      <!-- Selected sensor info -->
-      <div class="rounded-lg border border-slate-800 bg-fm-panelSoft/70 px-3 py-2">
-        <span class="text-[11px] uppercase tracking-[0.12em] text-fm-muted">
-          Selected Sensor: <span class="text-fm-text">{{ selectedSensorLabel }}</span>
-        </span>
+    <!-- Main Sensor Card + Chart side by side on desktop -->
+    <div class="grid gap-4 lg:grid-cols-5">
+      <!-- Main Sensor Card -->
+      <div class="lg:col-span-2">
+        <MainSensorCard
+          :device-name="deviceName"
+          :sensor-name="sensorName"
+          :temperature="currentTemp"
+          :unit="sensorUnit"
+          :is-online="isOnline"
+          :min="chartMin"
+          :max="chartMax"
+          :average="chartAvg"
+          :last-update="lastUpdate"
+          :trend="trend"
+        />
       </div>
 
       <!-- Chart -->
       <div
         ref="chartContainerRef"
-        class="relative"
+        class="lg:col-span-3"
         :class="{ 'fm-fullscreen': isFullscreen }"
       >
-        <SensorTrendChart
+        <DashboardChart
           v-if="trendPoints.length"
           :points="trendPoints"
           :live-mode="isLive"
-          :sensor-label="selectedSensorLabel"
+          :sensor-label="sensorName"
           :fullscreen="isFullscreen"
+          :alarm-low="alarmLow"
+          :alarm-high="alarmHigh"
           @toggle-fullscreen="toggleFullscreen"
         />
 
         <article
           v-else-if="!trendLoading"
-          class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
+          class="flex min-h-[200px] items-center justify-center rounded-xl border border-slate-700/40 bg-fm-panelSoft/60 p-6 text-sm text-fm-muted"
         >
-          No measurements available yet for the selected sensor.
+          <div class="text-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto mb-2 h-8 w-8 text-fm-muted/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            <p>No measurements available yet for the selected sensor.</p>
+          </div>
         </article>
 
         <article
           v-if="trendLoading"
-          class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
+          class="flex min-h-[200px] items-center justify-center rounded-xl border border-slate-700/40 bg-fm-panelSoft/60 p-6 text-sm text-fm-muted"
         >
-          Loading trend data...
+          <div class="flex items-center gap-2">
+            <svg class="h-4 w-4 animate-spin text-fm-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span>Loading trend data...</span>
+          </div>
         </article>
 
         <article
-          v-if="measurementsStore.error || trendError"
-          class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted"
+          v-if="trendError"
+          class="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-400"
         >
-          {{ trendError || "Measurements unavailable (REST). Showing live data when available." }}
+          {{ trendError }}
         </article>
       </div>
+    </div>
 
-      <!-- Time range buttons below the chart -->
-      <div class="rounded-lg border border-slate-800 bg-fm-panelSoft/50 px-3 py-2.5">
-        <div class="flex flex-wrap items-center gap-1.5">
-          <button
-            v-for="option in rangeOptions"
-            :key="option.key"
-            type="button"
-            class="rounded-md border px-2.5 py-1 text-[11px] font-semibold transition"
-            :class="selectedRange === option.key
-              ? 'border-fm-accent bg-fm-accent/20 text-fm-text'
-              : 'border-slate-700 bg-slate-900 text-fm-muted hover:border-slate-500 hover:text-fm-text'"
-            @click="selectedRange = option.key"
-          >
-            {{ option.label }}
-          </button>
-        </div>
+    <!-- Time range controls -->
+    <div class="flex flex-wrap items-center gap-1.5">
+      <button
+        v-for="option in rangeOptions"
+        :key="option.key"
+        type="button"
+        class="rounded-md border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition"
+        :class="selectedRange === option.key
+          ? 'border-fm-accent/60 bg-fm-accent/15 text-fm-accent'
+          : 'border-slate-700/50 bg-slate-900/60 text-fm-muted/70 hover:border-slate-500/50 hover:text-fm-text'"
+        @click="selectedRange = option.key"
+      >
+        {{ option.label }}
+      </button>
+    </div>
 
-        <div
-          v-if="selectedRange === 'CUSTOM'"
-          class="mt-2 grid gap-2 md:grid-cols-2"
+    <!-- Custom range inputs -->
+    <div
+      v-if="selectedRange === 'CUSTOM'"
+      class="grid gap-3 md:grid-cols-2"
+    >
+      <label class="text-[10px] uppercase tracking-[0.12em] text-fm-muted/60">
+        FROM
+        <input
+          v-model="customFrom"
+          type="datetime-local"
+          class="mt-1 w-full rounded-lg border border-slate-700/60 bg-slate-900/80 px-3 py-1.5 text-xs text-fm-text outline-none focus:border-fm-accent/60"
         >
-          <label class="text-[11px] text-fm-muted">
-            FROM
-            <input
-              v-model="customFrom"
-              type="datetime-local"
-              class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-fm-text"
-            >
-          </label>
-          <label class="text-[11px] text-fm-muted">
-            TO
-            <input
-              v-model="customTo"
-              type="datetime-local"
-              class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-fm-text"
-            >
-          </label>
-        </div>
-      </div>
-    </section>
-
-    <!-- Source and samples info -->
-    <div class="grid gap-3 md:grid-cols-2">
-      <article class="rounded-lg border border-slate-800 bg-fm-panelSoft px-3 py-2 text-xs text-fm-muted">
-        Source: {{ selectedSensorLabel }}
-      </article>
-      <article class="rounded-lg border border-slate-800 bg-fm-panelSoft px-3 py-2 text-xs text-fm-muted">
-        Samples in chart: {{ trendPoints.length }}
-      </article>
+      </label>
+      <label class="text-[10px] uppercase tracking-[0.12em] text-fm-muted/60">
+        TO
+        <input
+          v-model="customTo"
+          type="datetime-local"
+          class="mt-1 w-full rounded-lg border border-slate-700/60 bg-slate-900/80 px-3 py-1.5 text-xs text-fm-text outline-none focus:border-fm-accent/60"
+        >
+      </label>
     </div>
 
-    <!-- Status cards row - below the complete Sensor Trend section -->
-    <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <StatusCard
-        label="ALARMS"
-        :value="alarmsStore.count"
-        :alarm="true"
-        :active-alarms="alarmsStore.count"
-      />
-      <StatusCard
-        label="SYSTEM STATUS"
-        :value="systemStore.health?.status || 'unknown'"
-      />
-      <StatusCard
-        label="DEVICES"
-        :value="devicesStore.items.length"
-      />
-      <StatusCard
-        label="ONLINE DEVICES"
-        :value="devicesStore.onlineCount"
-      />
-    </div>
-  </section>
+    <!-- Summary Cards -->
+    <SummaryCards
+      :system-status="systemStore.health?.status || 'unknown'"
+      :total-devices="devicesStore.items.length"
+      :online-devices="devicesStore.onlineCount"
+      :active-alarms="alarmsStore.count"
+    />
+
+    <!-- Source Information -->
+    <SourceInfo
+      :device-name="deviceName"
+      :sensor-name="sensorName"
+      :sample-count="trendPoints.length"
+    />
+  </div>
 </template>
-
 
 <style scoped>
 .fm-fullscreen {
@@ -374,5 +422,13 @@ onBeforeUnmount(() => {
   padding: 1rem;
   display: flex;
   flex-direction: column;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 1s linear infinite;
 }
 </style>
