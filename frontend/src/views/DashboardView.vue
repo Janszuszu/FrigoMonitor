@@ -2,6 +2,7 @@
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 
 import SensorTrendChart from "@/components/SensorTrendChart.vue";
+import StatusCard from "@/components/StatusCard.vue";
 import { fetchMeasurementHistory } from "@/services/api";
 import { useAlarmsStore } from "@/stores/alarms";
 import { useDevicesStore } from "@/stores/devices";
@@ -14,6 +15,7 @@ const sensorsStore = useSensorsStore();
 const measurementsStore = useMeasurementsStore();
 const alarmsStore = useAlarmsStore();
 const systemStore = useSystemStore();
+
 
 const sensorById = computed(() => new Map(sensorsStore.items.map((sensor) => [sensor.id, sensor])));
 const deviceById = computed(() => new Map(devicesStore.items.map((device) => [device.id, device])));
@@ -337,8 +339,31 @@ onBeforeUnmount(() => {
         Samples in chart: {{ trendPoints.length }}
       </article>
     </div>
+
+    <!-- Status cards row - below the complete Sensor Trend section -->
+    <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <StatusCard
+        label="ALARMS"
+        :value="alarmsStore.count"
+        :alarm="true"
+        :active-alarms="alarmsStore.count"
+      />
+      <StatusCard
+        label="SYSTEM STATUS"
+        :value="systemStore.health?.status || 'unknown'"
+      />
+      <StatusCard
+        label="DEVICES"
+        :value="devicesStore.items.length"
+      />
+      <StatusCard
+        label="ONLINE DEVICES"
+        :value="devicesStore.onlineCount"
+      />
+    </div>
   </section>
 </template>
+
 
 <style scoped>
 .fm-fullscreen {
