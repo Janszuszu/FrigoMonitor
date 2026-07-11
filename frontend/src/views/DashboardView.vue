@@ -228,14 +228,10 @@ onBeforeUnmount(() => {
       </p>
     </header>
 
-    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <StatusCard
         label="System Status"
         :value="systemStore.health?.status || 'N/A'"
-      />
-      <StatusCard
-        label="Backend Version"
-        :value="systemStore.health?.version || 'N/A'"
       />
       <StatusCard
         label="Devices"
@@ -248,10 +244,8 @@ onBeforeUnmount(() => {
       <StatusCard
         label="Alarms"
         :value="alarmsStore.count"
-      />
-      <StatusCard
-        label="Latest Measurements"
-        :value="measurementsStore.latest.length"
+        :alarm="true"
+        :active-alarms="alarmsStore.count"
       />
     </div>
 
