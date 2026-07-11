@@ -30,18 +30,6 @@ const wsClass = computed(() => {
 
 <template>
   <header class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 bg-fm-panel p-4 md:p-6">
-    <div>
-      <h2 class="text-xl font-semibold text-fm-text">
-        Operations
-      </h2>
-      <p class="text-sm text-fm-muted">
-        Backend: {{ systemStore.backendUrl }}
-      </p>
-      <p class="text-xs text-fm-muted">
-        Version: {{ systemStore.health?.version || "unknown" }}
-      </p>
-    </div>
-
     <div class="flex items-center gap-3">
       <span
         class="rounded-md border px-3 py-1 text-xs font-semibold uppercase tracking-wide"
