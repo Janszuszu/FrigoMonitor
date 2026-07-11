@@ -84,6 +84,56 @@ def update_alarm_settings(sensor_id: int, payload: AlarmSettingsUpdate, db: Sess
     )
 
 
+@router.put("/alarms/settings", response_model=List[AlarmSettingsRead])
+def update_all_alarm_settings(payload: List[AlarmSettingsUpdate], db: Session = Depends(get_db)):
+    """Update alarm settings for all sensors in bulk."""
+    result = []
+    for update in payload:
+        if update.sensor_id is None:
+            raise HTTPException(status_code=422, detail="sensor_id is required for each settings update")
+
+        sensor = db.query(Sensor).filter(Sensor.id == update.sensor_id).one_or_none()
+        if sensor is None:
+            raise HTTPException(status_code=404, detail=f"Sensor {update.sensor_id} not found")
+
+        if update.alarm_low is not None and update.alarm_high is not None and update.alarm_low >= update.alarm_high:
+            raise HTTPException(
+                status_code=422,
+                detail=f"alarm_low must be lower than alarm_high for sensor {update.sensor_id}",
+            )
+
+        sensor.alarm_enabled = update.alarm_enabled
+        sensor.alarm_low = update.alarm_low
+        sensor.alarm_high = update.alarm_high
+        sensor.alarm_activation_delay = update.alarm_activation_delay
+        sensor.alarm_no_data_enabled = update.alarm_no_data_enabled
+        sensor.alarm_no_data_timeout = update.alarm_no_data_timeout
+
+        db.commit()
+        db.refresh(sensor)
+
+        device = db.query(Device).filter(Device.id == sensor.device_id).first()
+        result.append(
+            AlarmSettingsRead(
+                sensor_id=sensor.id,
+                device_id=sensor.device_id,
+                sensor_name=sensor.name,
+                device_name=device.name if device else "Unknown",
+                device_display_name=device.display_name if device else None,
+                current_temperature=sensor.last_value,
+                alarm_enabled=sensor.alarm_enabled,
+                alarm_low=sensor.alarm_low,
+                alarm_high=sensor.alarm_high,
+                alarm_activation_delay=sensor.alarm_activation_delay,
+                alarm_state=sensor.alarm_state,
+                alarm_level=sensor.alarm_level,
+                alarm_no_data_enabled=sensor.alarm_no_data_enabled,
+                alarm_no_data_timeout=sensor.alarm_no_data_timeout,
+            )
+        )
+    return result
+
+
 @router.get("/alarms/active", response_model=List[ActiveAlarmRead])
 def get_active_alarms(db: Session = Depends(get_db)):
     """Get currently active alarms."""

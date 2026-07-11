@@ -24,6 +24,7 @@ class AlarmSettingsRead(BaseModel):
 
 
 class AlarmSettingsUpdate(BaseModel):
+    sensor_id: Optional[int] = None
     alarm_enabled: bool = True
     alarm_low: Optional[float] = None
     alarm_high: Optional[float] = None

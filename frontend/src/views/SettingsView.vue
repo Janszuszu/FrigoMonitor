@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onMounted, reactive } from "vue";
+import { onMounted, reactive, ref, computed } from "vue";
 
 import { useAlarmsStore } from "@/stores/alarms";
 import { useSystemStore } from "@/stores/system";
-import { updateAlarmSettings } from "@/services/api";
+import { updateAllAlarmSettings } from "@/services/api";
 import type { AlarmSettings } from "@/types";
 
 const systemStore = useSystemStore();
@@ -15,7 +15,14 @@ const form = reactive({
   theme: systemStore.theme,
 });
 
-const savingAlarm = reactive<Record<number, boolean>>({});
+// Track unsaved changes
+const dirty = ref(false);
+const saving = ref(false);
+const saveMessage = ref<string | null>(null);
+const saveError = ref<string | null>(null);
+
+// Deep clone of original settings for change detection
+const originalSettings = ref<string>("");
 
 function save(): void {
   systemStore.setBackendUrl(form.backendUrl.trim());
@@ -24,23 +31,10 @@ function save(): void {
   console.info("Settings saved");
 }
 
-async function saveAlarmSettings(settings: AlarmSettings): Promise<void> {
-  savingAlarm[settings.sensor_id] = true;
-  try {
-    await updateAlarmSettings(settings.sensor_id, {
-      alarm_enabled: settings.alarm_enabled,
-      alarm_low: settings.alarm_low,
-      alarm_high: settings.alarm_high,
-      alarm_activation_delay: settings.alarm_activation_delay,
-      alarm_no_data_enabled: settings.alarm_no_data_enabled,
-      alarm_no_data_timeout: settings.alarm_no_data_timeout,
-    });
-    await alarmsStore.loadSettings();
-  } catch (err) {
-    console.error("Failed to save alarm settings", err);
-  } finally {
-    savingAlarm[settings.sensor_id] = false;
-  }
+function markDirty(): void {
+  dirty.value = true;
+  saveMessage.value = null;
+  saveError.value = null;
 }
 
 function getDeviceDisplayName(setting: AlarmSettings): string {
@@ -85,8 +79,43 @@ function getAlarmStatusClass(state: string): string {
   return "text-fm-muted";
 }
 
+async function saveAllAlarmSettings(): Promise<void> {
+  saving.value = true;
+  saveMessage.value = null;
+  saveError.value = null;
+
+  try {
+    const payload = alarmsStore.settings.map((s) => ({
+      sensor_id: s.sensor_id,
+      alarm_enabled: s.alarm_enabled,
+      alarm_low: s.alarm_low,
+      alarm_high: s.alarm_high,
+      alarm_activation_delay: s.alarm_activation_delay,
+      alarm_no_data_enabled: s.alarm_no_data_enabled,
+      alarm_no_data_timeout: s.alarm_no_data_timeout,
+    }));
+
+    await updateAllAlarmSettings(payload);
+
+    // Reload settings from backend to verify persistence
+    await alarmsStore.loadSettings();
+
+    // Clear dirty state after successful save
+    dirty.value = false;
+    originalSettings.value = JSON.stringify(alarmsStore.settings);
+    saveMessage.value = "Alarm settings saved successfully.";
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to save alarm settings";
+    saveError.value = message;
+    console.error("Failed to save alarm settings", err);
+  } finally {
+    saving.value = false;
+  }
+}
+
 onMounted(async () => {
   await alarmsStore.loadSettings();
+  originalSettings.value = JSON.stringify(alarmsStore.settings);
 });
 </script>
 
@@ -194,7 +223,7 @@ onMounted(async () => {
               type="checkbox"
               :checked="setting.alarm_enabled"
               class="rounded border-slate-700 bg-fm-panel text-fm-accent"
-              @change="setting.alarm_enabled = !setting.alarm_enabled; saveAlarmSettings(setting)"
+              @change="setting.alarm_enabled = !setting.alarm_enabled; markDirty()"
             >
             <span class="font-medium text-fm-muted">Alarm enabled</span>
           </label>
@@ -208,8 +237,7 @@ onMounted(async () => {
               step="0.1"
               class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-1.5 text-fm-text outline-none focus:border-fm-accent"
               placeholder="e.g. -25"
-              @input="setting.alarm_low = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null"
-              @change="saveAlarmSettings(setting)"
+              @input="setting.alarm_low = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null; markDirty()"
             >
           </label>
 
@@ -222,8 +250,7 @@ onMounted(async () => {
               step="0.1"
               class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-1.5 text-fm-text outline-none focus:border-fm-accent"
               placeholder="e.g. -15"
-              @input="setting.alarm_high = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null"
-              @change="saveAlarmSettings(setting)"
+              @input="setting.alarm_high = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null; markDirty()"
             >
           </label>
 
@@ -237,8 +264,7 @@ onMounted(async () => {
               step="1"
               class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-1.5 text-fm-text outline-none focus:border-fm-accent"
               placeholder="e.g. 10"
-              @input="setting.alarm_activation_delay = Number(($event.target as HTMLInputElement).value) * 60"
-              @change="saveAlarmSettings(setting)"
+              @input="setting.alarm_activation_delay = Number(($event.target as HTMLInputElement).value) * 60; markDirty()"
             >
           </label>
 
@@ -248,7 +274,7 @@ onMounted(async () => {
               type="checkbox"
               :checked="setting.alarm_no_data_enabled"
               class="rounded border-slate-700 bg-fm-panel text-fm-accent"
-              @change="setting.alarm_no_data_enabled = !setting.alarm_no_data_enabled; saveAlarmSettings(setting)"
+              @change="setting.alarm_no_data_enabled = !setting.alarm_no_data_enabled; markDirty()"
             >
             <span class="font-medium text-fm-muted">No Data alarm enabled</span>
           </label>
@@ -263,18 +289,44 @@ onMounted(async () => {
               step="1"
               class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-1.5 text-fm-text outline-none focus:border-fm-accent"
               placeholder="e.g. 15"
-              @input="setting.alarm_no_data_timeout = Number(($event.target as HTMLInputElement).value)"
-              @change="saveAlarmSettings(setting)"
+              @input="setting.alarm_no_data_timeout = Number(($event.target as HTMLInputElement).value); markDirty()"
             >
           </label>
         </div>
+      </div>
 
-        <div class="mt-2 text-right">
+      <!-- Save Alarm Settings Button -->
+      <div class="flex flex-col items-start gap-3 pt-2">
+        <div class="flex items-center gap-3">
+          <button
+            :disabled="saving"
+            class="rounded-lg px-5 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+            :class="dirty
+              ? 'bg-fm-accent text-slate-900 hover:brightness-110'
+              : 'bg-slate-700 text-fm-muted'"
+            @click="saveAllAlarmSettings"
+          >
+            {{ saving ? "Saving..." : "Save Alarm Settings" }}
+          </button>
           <span
-            v-if="savingAlarm[setting.sensor_id]"
-            class="text-xs text-fm-muted"
-          >Saving...</span>
+            v-if="dirty && !saving"
+            class="text-xs font-medium text-yellow-400"
+          >
+            Unsaved changes
+          </span>
         </div>
+        <p
+          v-if="saveMessage"
+          class="text-sm font-medium text-green-400"
+        >
+          {{ saveMessage }}
+        </p>
+        <p
+          v-if="saveError"
+          class="text-sm font-medium text-red-400"
+        >
+          {{ saveError }}
+        </p>
       </div>
     </section>
   </section>

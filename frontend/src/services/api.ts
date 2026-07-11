@@ -106,6 +106,11 @@ export async function updateAlarmSettings(sensorId: number, data: Partial<AlarmS
   return response.data;
 }
 
+export async function updateAllAlarmSettings(data: Partial<AlarmSettings>[]): Promise<AlarmSettings[]> {
+  const response = await api.put<AlarmSettings[]>("/alarms/settings", data);
+  return response.data;
+}
+
 export async function fetchActiveAlarms(): Promise<ActiveAlarm[]> {
   const response = await api.get<ActiveAlarm[]>("/alarms/active");
   return response.data;
