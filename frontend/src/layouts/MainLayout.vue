@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
 
 import Sidebar from "@/components/Sidebar.vue";
 import TopBar from "@/components/TopBar.vue";
@@ -13,6 +13,16 @@ const measurementsStore = useMeasurementsStore();
 const sensorsStore = useSensorsStore();
 const systemStore = useSystemStore();
 
+const drawerOpen = ref(false);
+
+function toggleDrawer(): void {
+  drawerOpen.value = !drawerOpen.value;
+}
+
+function closeDrawer(): void {
+  drawerOpen.value = false;
+}
+
 onMounted(async () => {
   try {
     await Promise.all([systemStore.load(), devicesStore.load(), sensorsStore.load(), measurementsStore.load()]);
@@ -25,14 +35,18 @@ onMounted(async () => {
 
 <template>
   <div class="min-h-screen bg-fm-bg text-fm-text">
-    <div class="flex min-h-screen flex-col md:flex-row">
-      <Sidebar />
-      <section class="flex min-h-screen flex-1 flex-col">
-        <TopBar />
-        <main class="flex-1 p-4 md:p-6">
-          <RouterView />
-        </main>
-      </section>
+    <Sidebar
+      :open="drawerOpen"
+      @close="closeDrawer"
+    />
+    <div class="flex min-h-screen flex-col">
+      <TopBar
+        :drawer-open="drawerOpen"
+        @toggle-drawer="toggleDrawer"
+      />
+      <main class="flex-1 p-3 md:p-4">
+        <RouterView />
+      </main>
     </div>
   </div>
 </template>

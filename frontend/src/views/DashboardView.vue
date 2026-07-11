@@ -2,7 +2,6 @@
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 
 import SensorTrendChart from "@/components/SensorTrendChart.vue";
-import StatusCard from "@/components/StatusCard.vue";
 import { fetchMeasurementHistory } from "@/services/api";
 import { useAlarmsStore } from "@/stores/alarms";
 import { useDevicesStore } from "@/stores/devices";
@@ -150,7 +149,7 @@ async function loadTrendHistory(): Promise<void> {
       return;
     }
   } else {
-    const preset = buildPresetRange(selectedRange.value);
+    const preset = buildPresetRange(selectedRange.value as "1h" | "6h" | "24h" | "72h" | "7d" | "30d");
     from = preset.from;
     to = preset.to;
   }
@@ -218,48 +217,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="space-y-6">
-    <header>
-      <h2 class="text-2xl font-semibold">
-        Dashboard
-      </h2>
-      <p class="text-sm text-fm-muted">
-        Overview of platform state and latest temperatures.
-      </p>
-    </header>
-
-    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <StatusCard
-        label="System Status"
-        :value="systemStore.health?.status || 'N/A'"
-      />
-      <StatusCard
-        label="Devices"
-        :value="devicesStore.items.length"
-      />
-      <StatusCard
-        label="Online Devices"
-        :value="devicesStore.onlineCount"
-      />
-      <StatusCard
-        label="Alarms"
-        :value="alarmsStore.count"
-        :alarm="true"
-        :active-alarms="alarmsStore.count"
-      />
-    </div>
-
-    <section class="space-y-3">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <h3 class="text-lg font-semibold text-fm-text">
+  <section class="space-y-3">
+    <!-- Sensor Trend section - directly at the top -->
+    <section class="space-y-2">
+      <!-- Header row: Sensor Trend title + sensor selector -->
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-base font-semibold text-fm-text">
           Sensor Trend
-        </h3>
+        </h2>
 
-        <label class="flex items-center gap-2 text-sm text-fm-muted">
+        <label class="flex items-center gap-2 text-xs text-fm-muted">
           Sensor:
           <select
             v-model.number="selectedSensorId"
-            class="rounded-md border border-slate-700 bg-slate-900 px-3 py-1 text-sm text-fm-text"
+            class="rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-fm-text"
           >
             <option
               v-for="option in sensorOptions"
@@ -272,49 +243,14 @@ onBeforeUnmount(() => {
         </label>
       </div>
 
-      <div class="rounded-xl border border-slate-800 bg-fm-panelSoft/70 p-3">
-        <div class="mb-2 text-xs uppercase tracking-[0.12em] text-fm-muted">
+      <!-- Selected sensor info -->
+      <div class="rounded-lg border border-slate-800 bg-fm-panelSoft/70 px-3 py-2">
+        <span class="text-[11px] uppercase tracking-[0.12em] text-fm-muted">
           Selected Sensor: <span class="text-fm-text">{{ selectedSensorLabel }}</span>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <button
-            v-for="option in rangeOptions"
-            :key="option.key"
-            type="button"
-            class="rounded-md border px-3 py-1.5 text-xs font-semibold transition"
-            :class="selectedRange === option.key
-              ? 'border-fm-accent bg-fm-accent/20 text-fm-text'
-              : 'border-slate-700 bg-slate-900 text-fm-muted hover:border-slate-500 hover:text-fm-text'"
-            @click="selectedRange = option.key"
-          >
-            {{ option.label }}
-          </button>
-        </div>
-
-        <div
-          v-if="selectedRange === 'CUSTOM'"
-          class="mt-3 grid gap-2 md:grid-cols-2"
-        >
-          <label class="text-xs text-fm-muted">
-            FROM
-            <input
-              v-model="customFrom"
-              type="datetime-local"
-              class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-fm-text"
-            >
-          </label>
-          <label class="text-xs text-fm-muted">
-            TO
-            <input
-              v-model="customTo"
-              type="datetime-local"
-              class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-fm-text"
-            >
-          </label>
-        </div>
+        </span>
       </div>
 
+      <!-- Chart -->
       <div
         ref="chartContainerRef"
         class="relative"
@@ -350,13 +286,54 @@ onBeforeUnmount(() => {
           {{ trendError || "Measurements unavailable (REST). Showing live data when available." }}
         </article>
       </div>
+
+      <!-- Time range buttons below the chart -->
+      <div class="rounded-lg border border-slate-800 bg-fm-panelSoft/50 px-3 py-2.5">
+        <div class="flex flex-wrap items-center gap-1.5">
+          <button
+            v-for="option in rangeOptions"
+            :key="option.key"
+            type="button"
+            class="rounded-md border px-2.5 py-1 text-[11px] font-semibold transition"
+            :class="selectedRange === option.key
+              ? 'border-fm-accent bg-fm-accent/20 text-fm-text'
+              : 'border-slate-700 bg-slate-900 text-fm-muted hover:border-slate-500 hover:text-fm-text'"
+            @click="selectedRange = option.key"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+
+        <div
+          v-if="selectedRange === 'CUSTOM'"
+          class="mt-2 grid gap-2 md:grid-cols-2"
+        >
+          <label class="text-[11px] text-fm-muted">
+            FROM
+            <input
+              v-model="customFrom"
+              type="datetime-local"
+              class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-fm-text"
+            >
+          </label>
+          <label class="text-[11px] text-fm-muted">
+            TO
+            <input
+              v-model="customTo"
+              type="datetime-local"
+              class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-fm-text"
+            >
+          </label>
+        </div>
+      </div>
     </section>
 
-    <div class="grid gap-4 lg:grid-cols-2">
-      <article class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted">
+    <!-- Source and samples info -->
+    <div class="grid gap-3 md:grid-cols-2">
+      <article class="rounded-lg border border-slate-800 bg-fm-panelSoft px-3 py-2 text-xs text-fm-muted">
         Source: {{ selectedSensorLabel }}
       </article>
-      <article class="rounded-xl border border-slate-800 bg-fm-panelSoft p-4 text-sm text-fm-muted">
+      <article class="rounded-lg border border-slate-800 bg-fm-panelSoft px-3 py-2 text-xs text-fm-muted">
         Samples in chart: {{ trendPoints.length }}
       </article>
     </div>
