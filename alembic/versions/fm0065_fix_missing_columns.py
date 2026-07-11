@@ -16,28 +16,24 @@ depends_on = None
 
 
 def upgrade():
-    # Add no_data alarm columns to sensors using direct SQL
-    # Use batch_alter_table for SQLite compatibility
-    from sqlalchemy import inspect
-
     conn = op.get_bind()
-    inspector = inspect(conn)
 
-    # Check if columns already exist
-    existing_columns = [col["name"] for col in inspector.get_columns("sensors")]
+    # Check if columns already exist in sensors table
+    existing_columns = [row[1] for row in conn.execute("PRAGMA table_info('sensors')").fetchall()]
 
-    with op.batch_alter_table("sensors", schema=None) as batch_op:
-        if "alarm_no_data_enabled" not in existing_columns:
-            batch_op.add_column(sa.Column("alarm_no_data_enabled", sa.Boolean(), nullable=False, server_default=sa.text("0")))
-        if "alarm_no_data_timeout" not in existing_columns:
-            batch_op.add_column(sa.Column("alarm_no_data_timeout", sa.Integer(), nullable=False, server_default=sa.text("15")))
-        if "alarm_no_data_since" not in existing_columns:
-            batch_op.add_column(sa.Column("alarm_no_data_since", sa.DateTime(timezone=True), nullable=True))
-        if "alarm_no_data_state" not in existing_columns:
-            batch_op.add_column(sa.Column("alarm_no_data_state", sa.String(20), nullable=False, server_default=sa.text("'NORMAL'")))
+    # Add no_data alarm columns to sensors using direct SQL (avoid batch_alter_table which creates temp tables)
+    if "alarm_no_data_enabled" not in existing_columns:
+        conn.execute(sa.text("ALTER TABLE sensors ADD COLUMN alarm_no_data_enabled BOOLEAN NOT NULL DEFAULT 0"))
+    if "alarm_no_data_timeout" not in existing_columns:
+        conn.execute(sa.text("ALTER TABLE sensors ADD COLUMN alarm_no_data_timeout INTEGER NOT NULL DEFAULT 15"))
+    if "alarm_no_data_since" not in existing_columns:
+        conn.execute(sa.text("ALTER TABLE sensors ADD COLUMN alarm_no_data_since DATETIME"))
+    if "alarm_no_data_state" not in existing_columns:
+        conn.execute(sa.text("ALTER TABLE sensors ADD COLUMN alarm_no_data_state VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"))
 
     # Create alarm_events table if not exists
-    if not inspector.has_table("alarm_events"):
+    existing_tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    if "alarm_events" not in existing_tables:
         op.create_table(
             "alarm_events",
             sa.Column("id", sa.Integer(), primary_key=True, index=True),
@@ -56,8 +52,14 @@ def upgrade():
 
 def downgrade():
     op.drop_table("alarm_events")
-    with op.batch_alter_table("sensors", schema=None) as batch_op:
-        batch_op.drop_column("alarm_no_data_state")
-        batch_op.drop_column("alarm_no_data_since")
-        batch_op.drop_column("alarm_no_data_timeout")
-        batch_op.drop_column("alarm_no_data_enabled")
+    conn = op.get_bind()
+    existing_columns = [row[1] for row in conn.execute("PRAGMA table_info('sensors')").fetchall()]
+    if "alarm_no_data_state" in existing_columns:
+        # SQLite doesn't support DROP COLUMN in older versions, but newer ones do
+        conn.execute(sa.text("ALTER TABLE sensors DROP COLUMN alarm_no_data_state"))
+    if "alarm_no_data_since" in existing_columns:
+        conn.execute(sa.text("ALTER TABLE sensors DROP COLUMN alarm_no_data_since"))
+    if "alarm_no_data_timeout" in existing_columns:
+        conn.execute(sa.text("ALTER TABLE sensors DROP COLUMN alarm_no_data_timeout"))
+    if "alarm_no_data_enabled" in existing_columns:
+        conn.execute(sa.text("ALTER TABLE sensors DROP COLUMN alarm_no_data_enabled"))
