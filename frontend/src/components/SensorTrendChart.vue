@@ -6,11 +6,6 @@ type ChartPoint = {
   value: number;
 };
 
-type Thresholds = {
-  min: number | null;
-  max: number | null;
-};
-
 const props = withDefaults(
   defineProps<{
     points: ChartPoint[];
@@ -18,14 +13,12 @@ const props = withDefaults(
     liveMode?: boolean;
     sensorLabel?: string;
     fullscreen?: boolean;
-    thresholds?: Thresholds | null;
   }>(),
   {
     height: 300,
     liveMode: false,
     sensorLabel: "",
     fullscreen: false,
-    thresholds: null,
   },
 );
 
@@ -39,7 +32,8 @@ type ParsedPoint = {
   value: number;
 };
 
-const padding = { top: 16, right: 16, bottom: 40, left: 52 };
+const padding = 42;
+
 const width = 960;
 const MAX_RENDER_POINTS = 1200;
 const MIN_ZOOM_SPAN_MS = 30 * 1000;
@@ -51,7 +45,7 @@ const containerWidth = ref(width);
 const viewFrom = ref<number | null>(null);
 const viewTo = ref<number | null>(null);
 
-const hoverState = ref<{ x: number; y: number; point: ParsedPoint; barIndex: number } | null>(null);
+const hoverState = ref<{ x: number; y: number; point: ParsedPoint } | null>(null);
 const isDragging = ref(false);
 const dragStartX = ref(0);
 const dragStartFrom = ref(0);
@@ -214,238 +208,57 @@ function downsampleMinMax(points: ParsedPoint[], targetPoints: number): ParsedPo
 
 const sampledVisiblePoints = computed(() => downsampleMinMax(visiblePoints.value, MAX_RENDER_POINTS));
 
-// ─── Dynamic value range based on data + thresholds ───
-const valueRange = computed(() => {
-  const pts = sampledVisiblePoints.value;
-  if (pts.length === 0) {
-    return { min: -30, max: 40 };
-  }
+const FIXED_VALUE_RANGE = { min: -30, max: 40 };
 
-  let minV = pts[0].value;
-  let maxV = pts[0].value;
-  for (const p of pts) {
-    if (p.value < minV) minV = p.value;
-    if (p.value > maxV) maxV = p.value;
-  }
+const valueRange = computed(() => FIXED_VALUE_RANGE);
 
-  // Include thresholds in range
-  const th = props.thresholds;
-  if (th) {
-    if (th.min !== null && th.min < minV) minV = th.min;
-    if (th.max !== null && th.max > maxV) maxV = th.max;
-  }
-
-  // Add padding
-  const pad = Math.max(2, (maxV - minV) * 0.15);
-  minV -= pad;
-  maxV += pad;
-
-  // Ensure minimum span
-  if (maxV - minV < 1) {
-    minV -= 2;
-    maxV += 2;
-  }
-
-  return { min: minV, max: maxV };
-});
 
 const chartHeight = computed(() => props.fullscreen ? Math.max(400, containerWidth.value * 0.5) : props.height);
 
-const innerWidth = computed(() => width - padding.left - padding.right);
-const innerHeight = computed(() => chartHeight.value - padding.top - padding.bottom);
-
-// ─── Bar color logic ───
-function getBarColor(value: number): string {
-  const th = props.thresholds;
-  if (!th) {
-    return "#4dd0e1"; // cyan default
+const normalized = computed(() => {
+  if (!activeDomain.value || !valueRange.value || sampledVisiblePoints.value.length === 0) {
+    return [] as Array<ParsedPoint & { x: number; y: number }>;
   }
 
-  const { min, max } = th;
-
-  // If both thresholds exist
-  if (min !== null && max !== null) {
-    const normalRange = max - min;
-    const warningZone = normalRange * 0.2; // upper 20% of range
-    const warningThreshold = max - warningZone;
-
-    if (value < min) return "#42a5f5"; // blue - too cold
-    if (value >= max) return "#ef5350"; // red - too hot
-    if (value >= warningThreshold) return "#f9a825"; // orange - approaching max
-    return "#26c6da"; // cyan - normal
-  }
-
-  // Only min threshold exists
-  if (min !== null) {
-    if (value < min) return "#42a5f5"; // blue - too cold
-    const warningZone = Math.abs(min) * 0.15 || 2;
-    if (value > min + warningZone * 3) return "#ef5350"; // red - far above min
-    if (value > min + warningZone) return "#f9a825"; // orange - above min
-    return "#26c6da"; // cyan - near min
-  }
-
-  // Only max threshold exists
-  if (max !== null) {
-    if (value >= max) return "#ef5350"; // red - too hot
-    const warningZone = Math.abs(max) * 0.15 || 2;
-    const warningThreshold = max - warningZone;
-    if (value >= warningThreshold) return "#f9a825"; // orange - approaching max
-    return "#26c6da"; // cyan - normal
-  }
-
-  return "#4dd0e1"; // fallback cyan
-}
-
-// ─── Normalized bar positions ───
-const bars = computed(() => {
-  const pts = sampledVisiblePoints.value;
-  if (pts.length === 0 || !activeDomain.value) return [];
-
+  const innerW = width - padding * 2;
+  const innerH = chartHeight.value - padding * 2;
   const timeSpan = Math.max(1, activeDomain.value.to - activeDomain.value.from);
-  const valSpan = valueRange.value.max - valueRange.value.min;
-  const iw = innerWidth.value;
-  const ih = innerHeight.value;
+  const valueSpan = valueRange.value.max - valueRange.value.min;
 
-  // Calculate bar width: fill available space with minimal gaps
-  const totalBarArea = iw;
-  const gapRatio = pts.length > 100 ? 0.1 : pts.length > 50 ? 0.15 : 0.2;
-  const totalGaps = totalBarArea * gapRatio;
-  const barWidth = Math.max(2, (totalBarArea - totalGaps) / pts.length);
-  const gap = pts.length > 1 ? (totalBarArea - barWidth * pts.length) / (pts.length - 1) : 0;
-
-  return pts.map((point, index) => {
-    const x = padding.left + ((point.t - activeDomain.value!.from) / timeSpan) * iw;
-    const barHeight = ((point.value - valueRange.value.min) / valSpan) * ih;
-    const y = padding.top + ih - barHeight;
-    const color = getBarColor(point.value);
-
-    return {
-      ...point,
-      x,
-      y,
-      barWidth: Math.max(1, barWidth),
-      barHeight: Math.max(0, barHeight),
-      color,
-      gap,
-    };
+  return sampledVisiblePoints.value.map((point) => {
+    const x = padding + ((point.t - activeDomain.value!.from) / timeSpan) * innerW;
+    const y = padding + ((valueRange.value!.max - point.value) / valueSpan) * innerH;
+    return { ...point, x, y };
   });
 });
 
-// ─── Y-axis ticks ───
-const yTicks = computed(() => {
-  const { min, max } = valueRange.value;
-  const range = max - min;
-  const tickCount = 5;
-  const rawStep = range / tickCount;
-  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const niceStep = [1, 2, 2.5, 5, 10].reduce((best, n) => {
-    const candidate = magnitude * n;
-    return Math.abs(candidate - rawStep) < Math.abs(best - rawStep) ? candidate : best;
-  }, magnitude);
-
-  const start = Math.ceil(min / niceStep) * niceStep;
-  const ticks: number[] = [];
-  for (let v = start; v <= max + niceStep * 0.01; v += niceStep) {
-    ticks.push(Math.round(v * 100) / 100);
+const pathD = computed(() => {
+  if (normalized.value.length === 0) {
+    return "";
   }
-  return ticks;
+
+  return normalized.value
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .join(" ");
 });
 
+const Y_TICKS = [-30, -20, -10, 0, 10, 20, 30, 40];
+
 const gridLines = computed(() => {
-  const ih = innerHeight.value;
-  const valSpan = valueRange.value.max - valueRange.value.min;
-  return yTicks.value.map((tick) => ({
+  const innerH = chartHeight.value - padding * 2;
+  const valueSpan = FIXED_VALUE_RANGE.max - FIXED_VALUE_RANGE.min;
+  return Y_TICKS.map((tick) => ({
     value: tick,
-    y: padding.top + ih - ((tick - valueRange.value.min) / valSpan) * ih,
+    y: padding + ((FIXED_VALUE_RANGE.max - tick) / valueSpan) * innerH,
   }));
 });
 
-// ─── Threshold lines ───
-const thresholdLines = computed(() => {
-  const th = props.thresholds;
-  if (!th) return [];
-
-  const lines: { value: number; label: string; color: string; y: number }[] = [];
-  const ih = innerHeight.value;
-  const valSpan = valueRange.value.max - valueRange.value.min;
-
-  if (th.min !== null) {
-    const y = padding.top + ih - ((th.min - valueRange.value.min) / valSpan) * ih;
-    if (y >= padding.top && y <= padding.top + ih) {
-      lines.push({ value: th.min, label: `MIN ${th.min.toFixed(1)}°C`, color: "#42a5f5", y });
-    }
-  }
-
-  if (th.max !== null) {
-    const y = padding.top + ih - ((th.max - valueRange.value.min) / valSpan) * ih;
-    if (y >= padding.top && y <= padding.top + ih) {
-      lines.push({ value: th.max, label: `MAX ${th.max.toFixed(1)}°C`, color: "#ef5350", y });
-    }
-  }
-
-  return lines;
-});
-
-// ─── Zero line ───
-const zeroLine = computed(() => {
-  const { min, max } = valueRange.value;
-  if (min > 0 || max < 0) return null;
-
-  const ih = innerHeight.value;
-  const valSpan = max - min;
-  const y = padding.top + ih - ((0 - min) / valSpan) * ih;
-  return y;
-});
-
-// ─── X-axis time labels ───
-const xLabels = computed(() => {
-  const pts = bars.value;
-  if (pts.length === 0 || !activeDomain.value) return [];
-
-  const timeSpan = activeDomain.value.to - activeDomain.value.from;
-  const labelCount = Math.max(2, Math.min(Math.floor(innerWidth.value / 80), pts.length));
-  const step = Math.max(1, Math.floor(pts.length / labelCount));
-
-  const labels: { x: number; text: string }[] = [];
-  for (let i = 0; i < pts.length; i += step) {
-    const pt = pts[i];
-    const text = formatTimeLabel(pt.t, timeSpan);
-    labels.push({ x: pt.x + pt.barWidth / 2, text });
-  }
-
-  // Always include last point
-  const last = pts[pts.length - 1];
-  if (labels.length === 0 || labels[labels.length - 1].x < last.x + last.barWidth / 2 - 5) {
-    labels.push({ x: last.x + last.barWidth / 2, text: formatTimeLabel(last.t, timeSpan) });
-  }
-
-  return labels;
-});
-
-function formatTimeLabel(t: number, timeSpanMs: number): string {
-  const date = new Date(t);
-  if (Number.isNaN(date.getTime())) return "--";
-
-  if (timeSpanMs <= 3600000) {
-    // <= 1h: HH:mm:ss
-    return date.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  }
-  if (timeSpanMs <= 86400000) {
-    // <= 24h: HH:mm
-    return date.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
-  }
-  if (timeSpanMs <= 604800000) {
-    // <= 7d: dd.MM HH:mm
-    return date.toLocaleDateString("pl-PL", { day: "2-digit", month: "2-digit" })
-      + " " + date.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
-  }
-  // > 7d: dd.MM
-  return date.toLocaleDateString("pl-PL", { day: "2-digit", month: "2-digit" });
-}
 
 function formatShortTime(timestamp: string): string {
   const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return "--";
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
   return date.toLocaleString("pl-PL", {
     year: "numeric",
     month: "2-digit",
@@ -458,7 +271,9 @@ function formatShortTime(timestamp: string): string {
 
 function formatTooltipDate(timestamp: string): string {
   const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return "--";
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
   return date.toLocaleString("pl-PL", {
     weekday: "short",
     year: "numeric",
@@ -470,56 +285,18 @@ function formatTooltipDate(timestamp: string): string {
   });
 }
 
-// ─── Status label ───
-function getStatus(value: number): string {
-  const th = props.thresholds;
-  if (!th) return "NORMAL";
-
-  const { min, max } = th;
-
-  if (min !== null && max !== null) {
-    const normalRange = max - min;
-    const warningZone = normalRange * 0.2;
-    const warningThreshold = max - warningZone;
-
-    if (value < min) return "LOW";
-    if (value >= max) return "HIGH";
-    if (value >= warningThreshold) return "WARNING";
-    return "NORMAL";
-  }
-
-  if (min !== null) {
-    if (value < min) return "LOW";
-    return "NORMAL";
-  }
-
-  if (max !== null) {
-    if (value >= max) return "HIGH";
-    const warningZone = Math.abs(max) * 0.15 || 2;
-    if (value >= max - warningZone) return "WARNING";
-    return "NORMAL";
-  }
-
-  return "NORMAL";
-}
-
-function getStatusColor(status: string): string {
-  switch (status) {
-    case "LOW": return "#42a5f5";
-    case "HIGH": return "#ef5350";
-    case "WARNING": return "#f9a825";
-    default: return "#26c6da";
-  }
-}
-
 function resetZoom(): void {
-  if (!fullDomain.value) return;
+  if (!fullDomain.value) {
+    return;
+  }
   viewFrom.value = fullDomain.value.from;
   viewTo.value = fullDomain.value.to;
 }
 
 function clampDomain(from: number, to: number): { from: number; to: number } | null {
-  if (!fullDomain.value) return null;
+  if (!fullDomain.value) {
+    return null;
+  }
 
   let nextFrom = from;
   let nextTo = to;
@@ -554,22 +331,30 @@ function clampDomain(from: number, to: number): { from: number; to: number } | n
 }
 
 function xToTimestamp(clientX: number): number | null {
-  if (!svgRef.value || !activeDomain.value) return null;
+  if (!svgRef.value || !activeDomain.value) {
+    return null;
+  }
   const bounds = svgRef.value.getBoundingClientRect();
-  const iw = innerWidth.value;
-  if (bounds.width <= 0 || iw <= 0) return null;
+  const innerW = width - padding * 2;
+  if (bounds.width <= 0 || innerW <= 0) {
+    return null;
+  }
 
   const localX = ((clientX - bounds.left) / bounds.width) * width;
-  const clampedX = Math.max(padding.left, Math.min(width - padding.right, localX));
-  const ratio = (clampedX - padding.left) / iw;
+  const clampedX = Math.max(padding, Math.min(width - padding, localX));
+  const ratio = (clampedX - padding) / innerW;
   return activeDomain.value.from + ratio * (activeDomain.value.to - activeDomain.value.from);
 }
 
 function onWheel(event: WheelEvent): void {
-  if (!activeDomain.value || !fullDomain.value) return;
+  if (!activeDomain.value || !fullDomain.value) {
+    return;
+  }
 
   const centerT = xToTimestamp(event.clientX);
-  if (centerT === null) return;
+  if (centerT === null) {
+    return;
+  }
 
   const zoomFactor = event.deltaY > 0 ? 1.18 : 0.82;
   const span = activeDomain.value.to - activeDomain.value.from;
@@ -586,7 +371,9 @@ function onWheel(event: WheelEvent): void {
 }
 
 function onPointerDown(event: PointerEvent): void {
-  if (event.button !== 0 || !activeDomain.value) return;
+  if (event.button !== 0 || !activeDomain.value) {
+    return;
+  }
 
   isDragging.value = true;
   dragStartX.value = event.clientX;
@@ -596,10 +383,14 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onPointerMove(event: PointerEvent): void {
-  if (!svgRef.value) return;
+  if (!svgRef.value) {
+    return;
+  }
 
   const bounds = svgRef.value.getBoundingClientRect();
-  if (bounds.width <= 0) return;
+  if (bounds.width <= 0) {
+    return;
+  }
 
   const localX = ((event.clientX - bounds.left) / bounds.width) * width;
   const localY = ((event.clientY - bounds.top) / bounds.height) * chartHeight.value;
@@ -615,50 +406,41 @@ function onPointerMove(event: PointerEvent): void {
     return;
   }
 
-  if (!bars.value.length) {
+  if (!normalized.value.length) {
     hoverState.value = null;
     return;
   }
 
-  // Find nearest bar
-  let nearest = bars.value[0];
-  let bestDistance = Math.abs(nearest.x + nearest.barWidth / 2 - localX);
+  let nearest = normalized.value[0];
+  let bestDistance = Math.abs(nearest.x - localX);
 
-  for (let i = 0; i < bars.value.length; i++) {
-    const bar = bars.value[i];
-    const barCenter = bar.x + bar.barWidth / 2;
-    const distance = Math.abs(barCenter - localX);
+  for (const point of normalized.value) {
+    const distance = Math.abs(point.x - localX);
     if (distance < bestDistance) {
       bestDistance = distance;
-      nearest = bar;
+      nearest = point;
     }
   }
 
-  // Only show tooltip if within reasonable distance
-  const maxDist = Math.max(30, nearest.barWidth * 2);
-  if (bestDistance > maxDist) {
-    hoverState.value = null;
-    return;
-  }
-
   hoverState.value = {
-    x: nearest.x + nearest.barWidth / 2,
+    x: nearest.x,
     y: nearest.y,
     point: {
       t: nearest.t,
       value: nearest.value,
       timestamp: nearest.timestamp,
     },
-    barIndex: bars.value.indexOf(nearest),
   };
 
-  if (localY < padding.top || localY > chartHeight.value - padding.bottom) {
+  if (localY < padding || localY > chartHeight.value - padding) {
     hoverState.value = null;
   }
 }
 
 function onPointerUp(event: PointerEvent): void {
-  if (!isDragging.value) return;
+  if (!isDragging.value) {
+    return;
+  }
   isDragging.value = false;
   svgRef.value?.releasePointerCapture(event.pointerId);
 }
@@ -741,7 +523,7 @@ function onPointerLeave(): void {
         class="h-auto w-full"
         :viewBox="`0 0 ${width} ${chartHeight}`"
         role="img"
-        aria-label="Sensor trend bar chart"
+        aria-label="Sensor trend chart"
         preserveAspectRatio="xMidYMid meet"
         @wheel.prevent="onWheel"
         @pointerdown="onPointerDown"
@@ -750,155 +532,90 @@ function onPointerLeave(): void {
         @pointercancel="onPointerUp"
         @pointerleave="onPointerLeave"
       >
-        <!-- Chart background -->
-        <rect x="0" y="0" :width="width" :height="chartHeight" fill="#05070b" rx="4" />
-
-        <!-- Horizontal grid lines -->
         <g>
           <line
             v-for="gl in gridLines"
-            :key="'grid-' + gl.value"
-            :x1="padding.left"
+            :key="gl.value"
+            :x1="padding"
             :y1="gl.y"
-            :x2="width - padding.right"
+            :x2="width - padding"
             :y2="gl.y"
-            stroke="#1e293b"
+            class="stroke-slate-700/60"
             stroke-width="1"
-            opacity="0.6"
           />
         </g>
 
-        <!-- Y-axis labels -->
-        <g class="text-[11px] fill-[#95a2b8]">
+        <g class="text-[11px] fill-fm-muted">
           <text
             v-for="gl in gridLines"
-            :key="'ylabel-' + gl.value"
-            :x="padding.left - 8"
+            :key="'label-' + gl.value"
+            :x="padding - 6"
             :y="gl.y + 4"
             text-anchor="end"
           >{{ gl.value > 0 ? '+' : '' }}{{ gl.value }}°C</text>
         </g>
 
-        <!-- Zero reference line -->
-        <line
-          v-if="zeroLine !== null"
-          :x1="padding.left"
-          :y1="zeroLine"
-          :x2="width - padding.right"
-          :y2="zeroLine"
-          stroke="#334155"
-          stroke-width="1"
-          stroke-dasharray="4,3"
-          opacity="0.5"
-        />
 
-        <!-- Threshold lines -->
-        <g v-for="tl in thresholdLines" :key="'thresh-' + tl.value">
-          <line
-            :x1="padding.left"
-            :y1="tl.y"
-            :x2="width - padding.right"
-            :y2="tl.y"
-            :stroke="tl.color"
-            stroke-width="2"
-            stroke-dasharray="6,3"
-            opacity="0.8"
-          />
-          <text
-            :x="width - padding.right - 6"
-            :y="tl.y - 4"
-            :fill="tl.color"
-            font-size="10"
-            font-weight="bold"
-            text-anchor="end"
-            opacity="0.95"
-          >{{ tl.label }}</text>
-        </g>
-
-        <!-- Bars -->
-        <g>
-          <rect
-            v-for="(bar, index) in bars"
-            :key="'bar-' + bar.t + '-' + index"
-            :x="bar.x"
-            :y="bar.y"
-            :width="Math.max(1, bar.barWidth)"
-            :height="Math.max(0, bar.barHeight)"
-            :fill="bar.color"
-            rx="2"
-            opacity="0.85"
-            class="transition-opacity duration-150"
-            :class="{ 'opacity-100': hoverState && hoverState.barIndex === index }"
-          />
-        </g>
-
-        <!-- X-axis labels -->
-        <g class="text-[10px] fill-[#95a2b8]">
-          <text
-            v-for="(label, i) in xLabels"
-            :key="'xlabel-' + i"
-            :x="label.x"
-            :y="chartHeight - 8"
-            text-anchor="middle"
-          >{{ label.text }}</text>
-        </g>
-
-        <!-- Hover vertical line -->
         <line
           v-if="hoverState"
           :x1="hoverState.x"
-          :y1="padding.top"
+          :y1="padding"
           :x2="hoverState.x"
-          :y2="chartHeight - padding.bottom"
-          stroke="#4dd0e1"
+          :y2="chartHeight - padding"
+          class="stroke-fm-accent/40"
           stroke-width="1"
-          opacity="0.4"
+        />
+
+        <path
+          v-if="pathD"
+          :d="pathD"
+          class="fill-none stroke-fm-accent"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+
+        <circle
+          v-for="point in normalized"
+          :key="`${point.timestamp}-${point.x}`"
+          :cx="point.x"
+          :cy="point.y"
+          :r="normalized.length < 320 ? 2.5 : 0"
+          class="fill-fm-accent"
+        >
+          <title>{{ point.value.toFixed(2) }} °C @ {{ formatShortTime(point.timestamp) }}</title>
+        </circle>
+
+        <circle
+          v-if="hoverState"
+          :cx="hoverState.x"
+          :cy="hoverState.y"
+          r="4"
+          class="fill-fm-accent"
         />
       </svg>
 
-      <!-- Tooltip -->
       <div
         v-if="hoverState"
-        class="pointer-events-none absolute z-10 max-w-[280px] rounded-md border border-slate-700 bg-slate-950/95 px-3 py-2.5 text-xs shadow-panel"
+        class="pointer-events-none absolute z-10 max-w-[300px] rounded-md border border-slate-700 bg-slate-950/95 px-3 py-2 text-xs text-fm-text shadow-panel"
         :style="{
-          left: `${Math.max(8, Math.min(hoverState.x / width * 100, 78))}%`,
-          top: `${Math.max(6, (hoverState.y / chartHeight * 100) - 28)}%`
+          left: `${Math.max(8, Math.min(hoverState.x / width * 100, 82))}%`,
+          top: `${Math.max(6, (hoverState.y / chartHeight * 100) - 22)}%`
         }"
       >
-        <div class="flex items-center gap-2">
-          <span
-            class="inline-block h-2.5 w-2.5 rounded-full"
-            :style="{ backgroundColor: getBarColor(hoverState.point.value) }"
-          />
-          <span class="font-semibold text-fm-text">
-            {{ hoverState.point.value.toFixed(1) }} °C
-          </span>
-        </div>
-        <div class="mt-1 text-fm-muted">
-          {{ formatTooltipDate(hoverState.point.timestamp) }}
+        <div class="font-semibold text-fm-accent">
+          {{ hoverState.point.value.toFixed(2) }} °C
         </div>
         <div class="mt-0.5 text-fm-muted">
-          Sensor: {{ sensorLabel || 'N/A' }}
-        </div>
-        <div class="mt-0.5">
-          <span
-            class="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold uppercase"
-            :style="{
-              backgroundColor: getStatusColor(getStatus(hoverState.point.value)) + '22',
-              color: getStatusColor(getStatus(hoverState.point.value)),
-              border: '1px solid ' + getStatusColor(getStatus(hoverState.point.value)) + '44'
-            }"
-          >
-            {{ getStatus(hoverState.point.value) }}
-          </span>
+          {{ formatTooltipDate(hoverState.point.timestamp) }}
         </div>
       </div>
     </div>
 
     <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-fm-muted">
       <span>Scroll: zoom | Drag: pan</span>
-      <span>{{ bars[0] ? formatShortTime(bars[0].timestamp) : "--" }}</span>
-      <span>{{ bars[bars.length - 1] ? formatShortTime(bars[bars.length - 1].timestamp) : "--" }}</span>
+      <span>{{ normalized[0] ? formatShortTime(normalized[0].timestamp) : "--" }}</span>
+      <span>{{ normalized[normalized.length - 1] ? formatShortTime(normalized[normalized.length - 1].timestamp) : "--" }}</span>
     </div>
   </div>
 </template>
