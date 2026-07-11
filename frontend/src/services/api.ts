@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import type { AlarmSettings, ActiveAlarm, AlarmHistoryItem, Device, Measurement, NetworkSettings, Sensor, SystemHealth } from "@/types";
+import type { AlarmSettings, ActiveAlarm, AlarmHistoryItem, Device, Measurement, NetworkSettings, Sensor, SystemHealth, TelegramSettings, TelegramSettingsUpdate, TelegramTestResult } from "@/types";
 
 export interface MeasurementHistoryParams {
   sensorId?: number;
@@ -133,6 +133,21 @@ export async function resetAlarm(alarmId: number): Promise<{ success: boolean; m
 
 export async function resetAllAlarms(): Promise<{ success: boolean; message: string; count: number }> {
   const response = await api.post<{ success: boolean; message: string; count: number }>("/alarms/reset-all");
+  return response.data;
+}
+
+export async function fetchTelegramSettings(): Promise<TelegramSettings> {
+  const response = await api.get<TelegramSettings>("/telegram/settings");
+  return response.data;
+}
+
+export async function updateTelegramSettings(data: TelegramSettingsUpdate): Promise<TelegramSettings> {
+  const response = await api.put<TelegramSettings>("/telegram/settings", data);
+  return response.data;
+}
+
+export async function testTelegramNotification(data: TelegramSettingsUpdate): Promise<TelegramTestResult> {
+  const response = await api.post<TelegramTestResult>("/telegram/test", data);
   return response.data;
 }
 

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 from app.logger import logger
-from app.api import system, devices, sensors, measurements, alarms
+from app.api import system, devices, sensors, measurements, alarms, telegram
 from app.services.device_manager import device_manager as _device_manager
 from app.services.modbus_rtu_service import modbus_rtu_service
 from app.services.nt57b08_service import nt57b08_service
@@ -56,4 +56,5 @@ app.include_router(devices.router, prefix="/api/v1")
 app.include_router(sensors.router, prefix="/api/v1")
 app.include_router(measurements.router, prefix="/api/v1")
 app.include_router(alarms.router, prefix="/api/v1")
+app.include_router(telegram.router, prefix="/api/v1")
 app.include_router(websocket_router)

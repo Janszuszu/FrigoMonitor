@@ -14,7 +14,9 @@ from app.database import SessionLocal
 from app.logger import logger
 from app.models.alarm import Alarm
 from app.models.alarm_event import AlarmEvent
+from app.models.device import Device
 from app.models.sensor import Sensor
+from app.services.telegram_service import send_alarm_notification, clear_notification_tracking
 
 
 class AlarmState:
@@ -196,6 +198,10 @@ class AlarmService:
         self._publish_alarm_event(sensor, measurement_id, AlarmState.NORMAL, None, message)
         logger.info("Alarm cleared for sensor %s: %s", sensor.id, message)
 
+        # Clear Telegram notification tracking so a new notification can be sent if alarm re-activates
+        if old_level:
+            clear_notification_tracking(sensor.id, old_level)
+
     def _clear_no_data(self, session, sensor: Sensor, measurement_id: Optional[int]) -> None:
         sensor.alarm_no_data_state = AlarmState.NORMAL
         sensor.alarm_no_data_since = None
@@ -204,6 +210,9 @@ class AlarmService:
         self._create_alarm_event(session, sensor, measurement_id, AlarmState.CLEARED, AlarmState.NO_DATA, "No-data alarm cleared")
         self._publish_alarm_event(sensor, measurement_id, AlarmState.NORMAL, None, "No-data alarm cleared")
         logger.info("No-data alarm cleared for sensor %s", sensor.id)
+
+        # Clear Telegram notification tracking so a new notification can be sent if alarm re-activates
+        clear_notification_tracking(sensor.id, AlarmState.NO_DATA)
 
     def _transition_to_pending(
         self,
@@ -266,6 +275,20 @@ class AlarmService:
         self._publish_alarm_event(sensor, measurement_id, active_state, sensor.alarm_level, f"Alarm activated: {sensor.alarm_level}")
         logger.info("Alarm activated for sensor %s: %s", sensor.id, sensor.alarm_level)
 
+        # Send Telegram notification for alarm activation
+        try:
+            device = session.query(Device).filter(Device.id == sensor.device_id).first()
+            send_alarm_notification(
+                sensor=sensor,
+                device=device,
+                alarm_type=active_state,
+                current_value=value,
+                threshold=threshold,
+                activated_at=timestamp,
+            )
+        except Exception:
+            logger.exception("Failed to send Telegram alarm notification")
+
     def _activate_no_data(self, session, sensor: Sensor, timestamp: datetime) -> None:
         sensor.alarm_no_data_state = AlarmState.NO_DATA
         sensor.alarm_no_data_since = timestamp
@@ -282,6 +305,20 @@ class AlarmService:
         )
         self._publish_alarm_event(sensor, None, AlarmState.NO_DATA, AlarmState.NO_DATA, "No data received")
         logger.info("No-data alarm activated for sensor %s", sensor.id)
+
+        # Send Telegram notification for no-data alarm activation
+        try:
+            device = session.query(Device).filter(Device.id == sensor.device_id).first()
+            send_alarm_notification(
+                sensor=sensor,
+                device=device,
+                alarm_type=AlarmState.NO_DATA,
+                current_value=None,
+                threshold=None,
+                activated_at=timestamp,
+            )
+        except Exception:
+            logger.exception("Failed to send Telegram no-data alarm notification")
 
     def _update_alarm_temperature(self, session, sensor: Sensor, measurement_id: Optional[int], value: float) -> None:
         """Update the latest temperature for an active alarm event."""
@@ -445,6 +482,9 @@ class AlarmService:
                     f"Alarm reset by user: {event.alarm_type}"
                 )
 
+            # Clear Telegram notification tracking so a new notification can be sent if alarm re-activates
+            clear_notification_tracking(event.sensor_id, event.alarm_type)
+
             logger.info("Alarm %s reset by user for sensor %s", alarm_event_id, event.sensor_id)
             return True
 
@@ -492,6 +532,11 @@ class AlarmService:
                     )
 
             s.commit()
+
+            # Clear all Telegram notification tracking
+            from app.services.telegram_service import clear_all_notification_tracking
+            clear_all_notification_tracking()
+
             logger.info("Bulk reset: %s alarms cleared", count)
             return count
 

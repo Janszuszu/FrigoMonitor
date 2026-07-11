@@ -2,20 +2,12 @@
 import { onMounted, reactive, ref, computed } from "vue";
 
 import { useAlarmsStore } from "@/stores/alarms";
-import { useSystemStore } from "@/stores/system";
-import { updateAllAlarmSettings } from "@/services/api";
-import type { AlarmSettings } from "@/types";
+import { updateAllAlarmSettings, fetchTelegramSettings, updateTelegramSettings, testTelegramNotification } from "@/services/api";
+import type { AlarmSettings, TelegramSettings as TelegramSettingsType } from "@/types";
 
-const systemStore = useSystemStore();
 const alarmsStore = useAlarmsStore();
 
-const form = reactive({
-  backendUrl: systemStore.backendUrl,
-  websocketUrl: systemStore.websocketUrl,
-  theme: systemStore.theme,
-});
-
-// Track unsaved changes
+// Track unsaved changes for alarm settings
 const dirty = ref(false);
 const saving = ref(false);
 const saveMessage = ref<string | null>(null);
@@ -24,17 +16,81 @@ const saveError = ref<string | null>(null);
 // Deep clone of original settings for change detection
 const originalSettings = ref<string>("");
 
-function save(): void {
-  systemStore.setBackendUrl(form.backendUrl.trim());
-  systemStore.setWebsocketUrl(form.websocketUrl.trim());
-  systemStore.setTheme(form.theme);
-  console.info("Settings saved");
+// Telegram state
+const telegramForm = reactive({
+  enabled: false,
+  botToken: "",
+  chatId: "",
+  botTokenConfigured: false,
+});
+
+const telegramSaving = ref(false);
+const telegramTesting = ref(false);
+const telegramMessage = ref<string | null>(null);
+const telegramError = ref<string | null>(null);
+const showToken = ref(false);
+
+async function loadTelegramSettings(): Promise<void> {
+  try {
+    const settings = await fetchTelegramSettings();
+    telegramForm.enabled = settings.enabled;
+    telegramForm.chatId = settings.chat_id;
+    telegramForm.botTokenConfigured = settings.bot_token_configured;
+    // Don't set botToken from backend - it's masked/not returned
+    telegramForm.botToken = "";
+  } catch (err) {
+    console.error("Failed to load Telegram settings", err);
+  }
 }
 
-function markDirty(): void {
-  dirty.value = true;
-  saveMessage.value = null;
-  saveError.value = null;
+async function saveTelegramSettings(): Promise<void> {
+  telegramSaving.value = true;
+  telegramMessage.value = null;
+  telegramError.value = null;
+
+  try {
+    const result = await updateTelegramSettings({
+      enabled: telegramForm.enabled,
+      bot_token: telegramForm.botToken,
+      chat_id: telegramForm.chatId,
+    });
+    telegramForm.botTokenConfigured = result.bot_token_configured;
+    // Clear the token field after save since it's not returned
+    telegramForm.botToken = "";
+    telegramMessage.value = "Telegram settings saved successfully.";
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to save Telegram settings";
+    telegramError.value = message;
+    console.error("Failed to save Telegram settings", err);
+  } finally {
+    telegramSaving.value = false;
+  }
+}
+
+async function sendTestNotification(): Promise<void> {
+  if (telegramTesting.value) return;
+  telegramTesting.value = true;
+  telegramMessage.value = null;
+  telegramError.value = null;
+
+  try {
+    const result = await testTelegramNotification({
+      enabled: telegramForm.enabled,
+      bot_token: telegramForm.botToken,
+      chat_id: telegramForm.chatId,
+    });
+    if (result.success) {
+      telegramMessage.value = result.message;
+    } else {
+      telegramError.value = result.message;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to send test notification";
+    telegramError.value = message;
+    console.error("Failed to send test notification", err);
+  } finally {
+    telegramTesting.value = false;
+  }
 }
 
 function getDeviceDisplayName(setting: AlarmSettings): string {
@@ -116,6 +172,7 @@ async function saveAllAlarmSettings(): Promise<void> {
 onMounted(async () => {
   await alarmsStore.loadSettings();
   originalSettings.value = JSON.stringify(alarmsStore.settings);
+  await loadTelegramSettings();
 });
 </script>
 
@@ -126,50 +183,96 @@ onMounted(async () => {
         Settings
       </h2>
       <p class="text-sm text-fm-muted">
-        Connection and presentation settings.
+        Configure Telegram notifications and alarm thresholds.
       </p>
     </header>
 
-    <form
-      class="max-w-3xl space-y-4 rounded-xl border border-slate-800 bg-fm-panelSoft p-6"
-      @submit.prevent="save"
-    >
-      <label class="block space-y-2 text-sm">
-        <span class="font-medium text-fm-muted">Backend URL</span>
-        <input
-          v-model="form.backendUrl"
-          class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 text-fm-text outline-none focus:border-fm-accent"
-          placeholder="/api/v1"
-        >
-      </label>
+    <!-- Telegram Notifications Section -->
+    <section class="space-y-4">
+      <header>
+        <h3 class="text-xl font-semibold">
+          Telegram Notifications
+        </h3>
+        <p class="text-sm text-fm-muted">
+          Configure Telegram bot for alarm notifications.
+        </p>
+      </header>
 
-      <label class="block space-y-2 text-sm">
-        <span class="font-medium text-fm-muted">WebSocket URL</span>
-        <input
-          v-model="form.websocketUrl"
-          class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 text-fm-text outline-none focus:border-fm-accent"
-          placeholder="/ws"
-        >
-      </label>
+      <div class="max-w-3xl space-y-4 rounded-xl border border-slate-800 bg-fm-panelSoft p-6">
+        <!-- Enable Telegram -->
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            v-model="telegramForm.enabled"
+            type="checkbox"
+            class="rounded border-slate-700 bg-fm-panel text-fm-accent"
+          >
+          <span class="font-medium text-fm-muted">Enable Telegram notifications</span>
+        </label>
 
-      <label class="block space-y-2 text-sm">
-        <span class="font-medium text-fm-muted">Theme</span>
-        <select
-          v-model="form.theme"
-          class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 text-fm-text outline-none focus:border-fm-accent"
-        >
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-        </select>
-      </label>
+        <!-- Bot Token -->
+        <label class="block space-y-2 text-sm">
+          <span class="font-medium text-fm-muted">Bot Token</span>
+          <div class="flex gap-2">
+            <input
+              v-model="telegramForm.botToken"
+              :type="showToken ? 'text' : 'password'"
+              class="flex-1 rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 font-mono text-fm-text outline-none focus:border-fm-accent"
+              :placeholder="telegramForm.botTokenConfigured ? 'Token configured (enter new value to change)' : 'Enter Bot Token'"
+            >
+            <button
+              type="button"
+              class="rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 text-sm text-fm-muted transition hover:text-fm-text"
+              @click="showToken = !showToken"
+            >
+              {{ showToken ? "Hide" : "Show" }}
+            </button>
+          </div>
+        </label>
 
-      <button
-        type="submit"
-        class="rounded-lg bg-fm-accent px-4 py-2 text-sm font-semibold text-slate-900 transition hover:brightness-110"
-      >
-        Save settings
-      </button>
-    </form>
+        <!-- Chat ID -->
+        <label class="block space-y-2 text-sm">
+          <span class="font-medium text-fm-muted">Chat ID</span>
+          <input
+            v-model="telegramForm.chatId"
+            type="text"
+            class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 font-mono text-fm-text outline-none focus:border-fm-accent"
+            placeholder="123456789"
+          >
+        </label>
+
+        <!-- Action buttons -->
+        <div class="flex flex-wrap items-center gap-3 pt-2">
+          <button
+            :disabled="telegramTesting"
+            class="rounded-lg border border-slate-600 bg-fm-panel px-4 py-2 text-sm font-semibold text-fm-text transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            @click="sendTestNotification"
+          >
+            {{ telegramTesting ? "Sending..." : "Send Test Notification" }}
+          </button>
+          <button
+            :disabled="telegramSaving"
+            class="rounded-lg bg-fm-accent px-4 py-2 text-sm font-semibold text-slate-900 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            @click="saveTelegramSettings"
+          >
+            {{ telegramSaving ? "Saving..." : "Save Telegram Settings" }}
+          </button>
+        </div>
+
+        <!-- Status messages -->
+        <p
+          v-if="telegramMessage"
+          class="text-sm font-medium text-green-400"
+        >
+          {{ telegramMessage }}
+        </p>
+        <p
+          v-if="telegramError"
+          class="text-sm font-medium text-red-400"
+        >
+          {{ telegramError }}
+        </p>
+      </div>
+    </section>
 
     <!-- Alarm Settings Section -->
     <section class="space-y-4">

@@ -122,4 +122,21 @@ export interface LiveEvent {
   payload?: Record<string, unknown> | null;
 }
 
+export interface TelegramSettings {
+  enabled: boolean;
+  chat_id: string;
+  bot_token_configured: boolean;
+}
+
+export interface TelegramSettingsUpdate {
+  enabled: boolean;
+  bot_token: string;
+  chat_id: string;
+}
+
+export interface TelegramTestResult {
+  success: boolean;
+  message: string;
+}
+
 
