@@ -10,6 +10,9 @@ const devicesStore = useDevicesStore();
 const sensorsStore = useSensorsStore();
 
 const activeTab = ref<"active" | "history">("active");
+const showResetAllConfirm = ref(false);
+const resettingAlarms = ref<Set<number>>(new Set());
+const resettingAll = ref(false);
 
 function formatTime(value: string | null): string {
   if (!value) {
@@ -70,6 +73,25 @@ function getAlarmTypeLabel(alarmType: string): string {
   }
 }
 
+async function handleResetAlarm(alarmId: number): Promise<void> {
+  resettingAlarms.value.add(alarmId);
+  try {
+    await alarmsStore.resetAlarm(alarmId);
+  } finally {
+    resettingAlarms.value.delete(alarmId);
+  }
+}
+
+async function handleResetAll(): Promise<void> {
+  showResetAllConfirm.value = false;
+  resettingAll.value = true;
+  try {
+    await alarmsStore.resetAllAlarms();
+  } finally {
+    resettingAll.value = false;
+  }
+}
+
 onMounted(async () => {
   try {
     await Promise.all([devicesStore.load(), sensorsStore.load()]);
@@ -115,6 +137,54 @@ onMounted(async () => {
 
     <!-- Active Alarms -->
     <div v-if="activeTab === 'active'">
+      <!-- RESET ALL button -->
+      <div
+        v-if="alarmsStore.activeAlarms.length > 0"
+        class="mb-3 flex items-center justify-end"
+      >
+        <button
+          class="rounded-lg border border-fm-warn/50 bg-fm-warn/10 px-4 py-2 text-sm font-medium text-fm-warn transition hover:bg-fm-warn/20 disabled:opacity-50"
+          :disabled="resettingAll"
+          @click="showResetAllConfirm = true"
+        >
+          <span v-if="resettingAll">Resetting...</span>
+          <span v-else>RESET ALL ({{ alarmsStore.count }})</span>
+        </button>
+      </div>
+
+      <!-- Reset All Confirmation Dialog -->
+      <div
+        v-if="showResetAllConfirm"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        @click.self="showResetAllConfirm = false"
+      >
+        <div class="mx-4 w-full max-w-md rounded-xl border border-slate-700 bg-fm-panel p-6 shadow-2xl">
+          <h3 class="text-lg font-semibold text-fm-text">
+            Reset All Alarms
+          </h3>
+          <p class="mt-2 text-sm text-fm-muted">
+            Are you sure you want to reset all {{ alarmsStore.count }} active alarms?
+          </p>
+          <p class="mt-1 text-xs text-fm-muted">
+            Alarm thresholds and configuration will be preserved. If alarm conditions are still active, new alarms will be created on the next measurement.
+          </p>
+          <div class="mt-4 flex justify-end gap-3">
+            <button
+              class="rounded-lg border border-slate-700 px-4 py-2 text-sm text-fm-muted transition hover:bg-slate-800"
+              @click="showResetAllConfirm = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="rounded-lg bg-fm-warn px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-fm-warn/90"
+              @click="handleResetAll"
+            >
+              Reset All
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div class="overflow-x-auto rounded-xl border border-slate-800 bg-fm-panelSoft">
         <table class="min-w-full text-left text-sm">
           <thead class="border-b border-slate-800 text-xs uppercase tracking-wide text-fm-muted">
@@ -125,8 +195,8 @@ onMounted(async () => {
               <th class="px-4 py-3">
                 Sensor
               </th>
-              <th class="px-4 py-3">
-                Alarm Type
+              <th class="min-w-[140px] px-4 py-3">
+                <span class="whitespace-nowrap">Alarm Type</span>
               </th>
               <th class="px-4 py-3">
                 Current Temperature
@@ -141,7 +211,10 @@ onMounted(async () => {
                 Duration
               </th>
               <th class="px-4 py-3">
-                Status
+                <span class="whitespace-nowrap">Status</span>
+              </th>
+              <th class="px-4 py-3">
+                <span class="whitespace-nowrap">Actions</span>
               </th>
             </tr>
           </thead>
@@ -159,7 +232,7 @@ onMounted(async () => {
               </td>
               <td class="px-4 py-3">
                 <span
-                  class="rounded-full border px-2 py-1 text-xs font-semibold uppercase"
+                  class="inline-block whitespace-nowrap rounded-full border px-2 py-1 text-xs font-semibold uppercase"
                   :class="getAlarmBadgeClass(alarm.alarm_type)"
                 >
                   {{ getAlarmTypeLabel(alarm.alarm_type) }}
@@ -179,16 +252,26 @@ onMounted(async () => {
               </td>
               <td class="px-4 py-3">
                 <span
-                  class="rounded-full border px-2 py-1 text-xs font-semibold uppercase"
+                  class="inline-block whitespace-nowrap rounded-full border px-2 py-1 text-xs font-semibold uppercase"
                   :class="getAlarmBadgeClass(alarm.state)"
                 >
                   {{ alarm.state === "NO_DATA" ? "NO DATA" : alarm.state.includes("PENDING") ? "PENDING" : "ACTIVE" }}
                 </span>
               </td>
+              <td class="px-4 py-3">
+                <button
+                  class="rounded-lg border border-fm-warn/50 bg-fm-warn/10 px-3 py-1 text-xs font-medium text-fm-warn transition hover:bg-fm-warn/20 disabled:opacity-50"
+                  :disabled="resettingAlarms.has(alarm.id)"
+                  @click="handleResetAlarm(alarm.id)"
+                >
+                  <span v-if="resettingAlarms.has(alarm.id)">...</span>
+                  <span v-else>RESET</span>
+                </button>
+              </td>
             </tr>
             <tr v-if="alarmsStore.activeAlarms.length === 0">
               <td
-                colspan="8"
+                colspan="9"
                 class="px-4 py-6 text-center text-fm-muted"
               >
                 No active alarms
@@ -211,8 +294,8 @@ onMounted(async () => {
               <th class="px-4 py-3">
                 Sensor
               </th>
-              <th class="px-4 py-3">
-                Alarm Type
+              <th class="min-w-[140px] px-4 py-3">
+                <span class="whitespace-nowrap">Alarm Type</span>
               </th>
               <th class="px-4 py-3">
                 Temperature
@@ -227,7 +310,7 @@ onMounted(async () => {
                 Cleared
               </th>
               <th class="px-4 py-3">
-                Status
+                <span class="whitespace-nowrap">Status</span>
               </th>
             </tr>
           </thead>
@@ -245,7 +328,7 @@ onMounted(async () => {
               </td>
               <td class="px-4 py-3">
                 <span
-                  class="rounded-full border px-2 py-1 text-xs font-semibold uppercase"
+                  class="inline-block whitespace-nowrap rounded-full border px-2 py-1 text-xs font-semibold uppercase"
                   :class="getAlarmBadgeClass(event.alarm_type)"
                 >
                   {{ getAlarmTypeLabel(event.alarm_type) }}
@@ -265,7 +348,7 @@ onMounted(async () => {
               </td>
               <td class="px-4 py-3">
                 <span
-                  class="rounded-full border px-2 py-1 text-xs font-semibold uppercase"
+                  class="inline-block whitespace-nowrap rounded-full border px-2 py-1 text-xs font-semibold uppercase"
                   :class="event.state === 'CLEARED' ? 'border-green-500/60 bg-green-500/20 text-green-400' : getAlarmBadgeClass(event.state)"
                 >
                   {{ event.state === "CLEARED" ? "RESOLVED" : event.state }}

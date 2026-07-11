@@ -125,3 +125,15 @@ export async function fetchAlarmHistory(sensorId?: number, limit = 100): Promise
   const response = await api.get<AlarmHistoryItem[]>(`/alarms/history?${params.toString()}`);
   return response.data;
 }
+
+export async function resetAlarm(alarmId: number): Promise<{ success: boolean; message: string }> {
+  const response = await api.post<{ success: boolean; message: string }>(`/alarms/${alarmId}/reset`);
+  return response.data;
+}
+
+export async function resetAllAlarms(): Promise<{ success: boolean; message: string; count: number }> {
+  const response = await api.post<{ success: boolean; message: string; count: number }>("/alarms/reset-all");
+  return response.data;
+}
+
+

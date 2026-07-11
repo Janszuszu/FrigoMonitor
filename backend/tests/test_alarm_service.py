@@ -312,3 +312,179 @@ class TestAlarmService:
         # Verify history still exists
         events = db_session.query(AlarmEvent).filter(AlarmEvent.sensor_id == sensor.id).all()
         assert len(events) >= 1
+
+    def test_reset_single_alarm(self, db_session, sensor):
+        """Test resetting a single active alarm."""
+        service = AlarmService()
+        now = datetime.now(UTC)
+
+        # Activate alarm
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
+        later = now + timedelta(seconds=sensor.alarm_activation_delay + 1)
+        service.process_measurement(sensor.id, -12.0, later, session=db_session)
+
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.ALARM_HIGH
+
+        # Find the active alarm event
+        event = db_session.query(AlarmEvent).filter(
+            AlarmEvent.sensor_id == sensor.id,
+            AlarmEvent.state == AlarmState.ALARM_HIGH,
+        ).first()
+        assert event is not None
+        assert event.cleared_at is None
+
+        # Reset the alarm
+        result = service.reset_alarm(event.id, session=db_session)
+        assert result is True
+
+        # Verify alarm event is cleared
+        db_session.refresh(event)
+        assert event.state == AlarmState.CLEARED
+        assert event.cleared_at is not None
+
+        # Verify sensor state is reset
+        db_session.refresh(sensor)
+        assert sensor.alarm_state == AlarmState.NORMAL
+        assert sensor.alarm_level is None
+        assert sensor.alarm_pending_since is None
+
+        # Verify alarm thresholds are preserved
+        assert sensor.alarm_low == -25.0
+        assert sensor.alarm_high == -15.0
+        assert sensor.alarm_enabled is True
+
+    def test_reset_nonexistent_alarm(self, db_session, sensor):
+        """Test resetting a nonexistent alarm returns False."""
+        service = AlarmService()
+        result = service.reset_alarm(99999, session=db_session)
+        assert result is False
+
+    def test_reset_already_cleared_alarm(self, db_session, sensor):
+        """Test resetting an already cleared alarm returns False."""
+        service = AlarmService()
+        now = datetime.now(UTC)
+
+        # Activate alarm
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
+        later = now + timedelta(seconds=sensor.alarm_activation_delay + 1)
+        service.process_measurement(sensor.id, -12.0, later, session=db_session)
+
+        # Find the active alarm event
+        event = db_session.query(AlarmEvent).filter(
+            AlarmEvent.sensor_id == sensor.id,
+            AlarmEvent.state == AlarmState.ALARM_HIGH,
+        ).first()
+        assert event is not None
+
+        # Reset once
+        result = service.reset_alarm(event.id, session=db_session)
+        assert result is True
+
+        # Try to reset again - should return False since it's already CLEARED
+        result = service.reset_alarm(event.id, session=db_session)
+        assert result is False
+
+    def test_reset_all_alarms(self, db_session, device):
+        """Test resetting all active alarms."""
+        service = AlarmService()
+        now = datetime.now(UTC)
+
+        # Create two sensors with alarms
+        s1 = Sensor(
+            device_id=device.id,
+            name="Sensor1",
+            alarm_enabled=True,
+            alarm_low=-25.0,
+            alarm_high=-15.0,
+            alarm_activation_delay=0,
+            alarm_state=AlarmState.NORMAL,
+            alarm_no_data_enabled=False,
+            alarm_no_data_timeout=15,
+            alarm_no_data_state=AlarmState.NORMAL,
+        )
+        s2 = Sensor(
+            device_id=device.id,
+            name="Sensor2",
+            alarm_enabled=True,
+            alarm_low=-25.0,
+            alarm_high=-15.0,
+            alarm_activation_delay=0,
+            alarm_state=AlarmState.NORMAL,
+            alarm_no_data_enabled=False,
+            alarm_no_data_timeout=15,
+            alarm_no_data_state=AlarmState.NORMAL,
+        )
+        db_session.add_all([s1, s2])
+        db_session.commit()
+        db_session.refresh(s1)
+        db_session.refresh(s2)
+
+        # Activate alarms on both sensors
+        service.process_measurement(s1.id, -12.0, now, session=db_session)
+        service.process_measurement(s2.id, -12.0, now, session=db_session)
+
+        db_session.refresh(s1)
+        db_session.refresh(s2)
+        assert s1.alarm_state == AlarmState.ALARM_HIGH
+        assert s2.alarm_state == AlarmState.ALARM_HIGH
+
+        # Reset all alarms
+        count = service.reset_all_alarms(session=db_session)
+        assert count == 2
+
+        # Verify both sensors are reset
+        db_session.refresh(s1)
+        db_session.refresh(s2)
+        assert s1.alarm_state == AlarmState.NORMAL
+        assert s2.alarm_state == AlarmState.NORMAL
+
+        # Verify alarm events are cleared
+        active_events = db_session.query(AlarmEvent).filter(
+            AlarmEvent.state.in_(["ALARM_HIGH", "ALARM_LOW", "PENDING_HIGH", "PENDING_LOW", "NO_DATA"])
+        ).count()
+        assert active_events == 0
+
+        # Verify history is preserved (events exist but are CLEARED)
+        cleared_events = db_session.query(AlarmEvent).filter(
+            AlarmEvent.state == AlarmState.CLEARED
+        ).count()
+        assert cleared_events >= 2
+
+    def test_reset_all_no_active_alarms(self, db_session):
+        """Test resetting all alarms when none are active returns 0."""
+        service = AlarmService()
+        count = service.reset_all_alarms(session=db_session)
+        assert count == 0
+
+    def test_reset_preserves_alarm_configuration(self, db_session, sensor):
+        """Test that reset does not change alarm thresholds or enabled state."""
+        service = AlarmService()
+        now = datetime.now(UTC)
+
+        # Activate alarm
+        service.process_measurement(sensor.id, -12.0, now, session=db_session)
+        later = now + timedelta(seconds=sensor.alarm_activation_delay + 1)
+        service.process_measurement(sensor.id, -12.0, later, session=db_session)
+
+        # Store original config
+        orig_low = sensor.alarm_low
+        orig_high = sensor.alarm_high
+        orig_enabled = sensor.alarm_enabled
+        orig_delay = sensor.alarm_activation_delay
+
+        # Find and reset the alarm
+        event = db_session.query(AlarmEvent).filter(
+            AlarmEvent.sensor_id == sensor.id,
+            AlarmEvent.state == AlarmState.ALARM_HIGH,
+        ).first()
+        service.reset_alarm(event.id, session=db_session)
+
+        # Verify configuration is unchanged
+        db_session.refresh(sensor)
+        assert sensor.alarm_low == orig_low
+        assert sensor.alarm_high == orig_high
+        assert sensor.alarm_enabled == orig_enabled
+        assert sensor.alarm_activation_delay == orig_delay
+
+

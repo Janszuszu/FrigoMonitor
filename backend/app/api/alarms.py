@@ -12,7 +12,10 @@ from app.schemas.alarm import (
     AlarmSettingsUpdate,
     ActiveAlarmRead,
     AlarmHistoryRead,
+    AlarmResetResponse,
 )
+from app.services.alarm_service import alarm_service
+
 
 router = APIRouter(tags=["Alarms"])
 
@@ -43,6 +46,36 @@ def get_alarm_settings(db: Session = Depends(get_db)):
             )
         )
     return result
+
+
+@router.post("/alarms/{alarm_id}/reset", response_model=AlarmResetResponse)
+def reset_alarm(alarm_id: int, db: Session = Depends(get_db)):
+    """Reset/acknowledge a single active alarm event.
+    
+    The alarm event is marked as CLEARED and the sensor state is reset to NORMAL.
+    Alarm thresholds and configuration are preserved.
+    If the alarm condition is still active, the next measurement will create a new alarm.
+    """
+    success = alarm_service.reset_alarm(alarm_id, session=db)
+    if not success:
+        raise HTTPException(status_code=404, detail="Active alarm not found or already cleared")
+    return AlarmResetResponse(success=True, message=f"Alarm {alarm_id} reset successfully")
+
+
+@router.post("/alarms/reset-all", response_model=AlarmResetResponse)
+def reset_all_alarms(db: Session = Depends(get_db)):
+    """Reset all currently active alarms.
+    
+    All active alarm events are marked as CLEARED and their sensor states are reset to NORMAL.
+    Alarm thresholds and configuration are preserved.
+    """
+    count = alarm_service.reset_all_alarms(session=db)
+    return AlarmResetResponse(
+        success=True,
+        message=f"{count} alarm(s) reset successfully",
+        count=count,
+    )
+
 
 
 @router.put("/alarms/settings/{sensor_id}", response_model=AlarmSettingsRead)

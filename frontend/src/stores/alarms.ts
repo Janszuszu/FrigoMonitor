@@ -1,7 +1,8 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 
-import { fetchActiveAlarms, fetchAlarmHistory, fetchAlarmSettings } from "@/services/api";
+import { fetchActiveAlarms, fetchAlarmHistory, fetchAlarmSettings, resetAlarm as apiResetAlarm, resetAllAlarms as apiResetAllAlarms } from "@/services/api";
+
 import { useDevicesStore } from "@/stores/devices";
 import { useSensorsStore } from "@/stores/sensors";
 import type { ActiveAlarm, AlarmHistoryItem, AlarmSettings } from "@/types";
@@ -85,6 +86,32 @@ export const useAlarmsStore = defineStore("alarms", () => {
     loadActiveAlarms();
   }
 
+  async function resetAlarm(alarmId: number): Promise<boolean> {
+    try {
+      await apiResetAlarm(alarmId);
+      // Reload active alarms and history to reflect the change
+      await Promise.all([loadActiveAlarms(), loadHistory()]);
+      return true;
+    } catch (err) {
+      console.error("Failed to reset alarm", err);
+      error.value = "Failed to reset alarm";
+      return false;
+    }
+  }
+
+  async function resetAllAlarmsAction(): Promise<number> {
+    try {
+      const result = await apiResetAllAlarms();
+      // Reload active alarms and history to reflect the change
+      await Promise.all([loadActiveAlarms(), loadHistory()]);
+      return result.count;
+    } catch (err) {
+      console.error("Failed to reset all alarms", err);
+      error.value = "Failed to reset all alarms";
+      return 0;
+    }
+  }
+
   return {
     settings,
     activeAlarms,
@@ -99,5 +126,8 @@ export const useAlarmsStore = defineStore("alarms", () => {
     getSensorDisplayName,
     activateFromLive,
     clearFromLive,
+    resetAlarm,
+    resetAllAlarms: resetAllAlarmsAction,
   };
+
 });

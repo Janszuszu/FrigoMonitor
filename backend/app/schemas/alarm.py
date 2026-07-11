@@ -53,7 +53,17 @@ class ActiveAlarmRead(BaseModel):
         orm_mode = True
 
 
+class AlarmResetResponse(BaseModel):
+    success: bool
+    message: str
+    count: int = 0
+
+    class Config:
+        orm_mode = True
+
+
 class AlarmHistoryRead(BaseModel):
+
     id: int
     sensor_id: int
     device_id: Optional[int]

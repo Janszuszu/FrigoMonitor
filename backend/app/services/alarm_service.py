@@ -402,6 +402,109 @@ class AlarmService:
             )
         )
 
+    def reset_alarm(self, alarm_event_id: int, session: Optional[SessionLocal] = None) -> bool:
+        """Reset/acknowledge a single active alarm event.
+        
+        This clears the alarm event and resets the sensor state to NORMAL,
+        but does NOT disable alarms or change thresholds.
+        If the alarm condition is still active, the next measurement will
+        re-evaluate and create a new alarm.
+        
+        Returns True if the alarm was found and reset, False otherwise.
+        """
+        def _reset(s):
+            event = s.query(AlarmEvent).filter(AlarmEvent.id == alarm_event_id).one_or_none()
+            if event is None:
+                return False
+
+            active_states = ["PENDING_HIGH", "PENDING_LOW", "ALARM_HIGH", "ALARM_LOW", "NO_DATA"]
+            if event.state not in active_states:
+                logger.warning("AlarmEvent %s is not active (state=%s), skipping reset", alarm_event_id, event.state)
+                return False
+
+            # Mark the alarm event as cleared
+            event.state = AlarmState.CLEARED
+            event.cleared_at = datetime.now(UTC)
+            s.commit()
+
+            # Reset the sensor's alarm state
+            sensor = s.query(Sensor).filter(Sensor.id == event.sensor_id).one_or_none()
+            if sensor is not None:
+                if event.alarm_type in (AlarmState.NO_DATA, "NO_DATA"):
+                    sensor.alarm_no_data_state = AlarmState.NORMAL
+                    sensor.alarm_no_data_since = None
+                else:
+                    sensor.alarm_state = AlarmState.NORMAL
+                    sensor.alarm_level = None
+                    sensor.alarm_pending_since = None
+                s.commit()
+
+                # Publish alarm update event so WebSocket clients get notified
+                self._publish_alarm_event(
+                    sensor, None, AlarmState.CLEARED, event.alarm_type,
+                    f"Alarm reset by user: {event.alarm_type}"
+                )
+
+            logger.info("Alarm %s reset by user for sensor %s", alarm_event_id, event.sensor_id)
+            return True
+
+        if session is not None:
+            return _reset(session)
+        else:
+            try:
+                with SessionLocal() as s:
+                    return _reset(s)
+            except SQLAlchemyError:
+                logger.exception("Database error in AlarmService.reset_alarm")
+                return False
+
+    def reset_all_alarms(self, session: Optional[SessionLocal] = None) -> int:
+        """Reset all currently active alarms.
+        
+        Returns the number of alarms that were reset.
+        """
+        def _reset_all(s):
+            active_states = ["PENDING_HIGH", "PENDING_LOW", "ALARM_HIGH", "ALARM_LOW", "NO_DATA"]
+            events = (
+                s.query(AlarmEvent)
+                .filter(AlarmEvent.state.in_(active_states))
+                .all()
+            )
+            count = 0
+            for event in events:
+                event.state = AlarmState.CLEARED
+                event.cleared_at = datetime.now(UTC)
+                count += 1
+
+                sensor = s.query(Sensor).filter(Sensor.id == event.sensor_id).one_or_none()
+                if sensor is not None:
+                    if event.alarm_type in (AlarmState.NO_DATA, "NO_DATA"):
+                        sensor.alarm_no_data_state = AlarmState.NORMAL
+                        sensor.alarm_no_data_since = None
+                    else:
+                        sensor.alarm_state = AlarmState.NORMAL
+                        sensor.alarm_level = None
+                        sensor.alarm_pending_since = None
+
+                    self._publish_alarm_event(
+                        sensor, None, AlarmState.CLEARED, event.alarm_type,
+                        f"Alarm reset by user (bulk): {event.alarm_type}"
+                    )
+
+            s.commit()
+            logger.info("Bulk reset: %s alarms cleared", count)
+            return count
+
+        if session is not None:
+            return _reset_all(session)
+        else:
+            try:
+                with SessionLocal() as s:
+                    return _reset_all(s)
+            except SQLAlchemyError:
+                logger.exception("Database error in AlarmService.reset_all_alarms")
+                return 0
+
     @staticmethod
     def _normalize_timestamp(timestamp: datetime) -> datetime:
         if timestamp.tzinfo is None:
@@ -410,3 +513,5 @@ class AlarmService:
 
 
 alarm_service = AlarmService()
+
+
