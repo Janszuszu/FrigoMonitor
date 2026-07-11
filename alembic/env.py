@@ -10,6 +10,7 @@ import sys
 
 # allow importing app package
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend')))
 
 from app.database import Base
 from app.config import settings
