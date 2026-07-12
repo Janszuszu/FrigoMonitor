@@ -149,6 +149,23 @@ class NotificationService:
 
     def _handle_alarm_event(self, event: Event) -> None:
         payload = event.payload or {}
+        alarm_type = payload.get("alarm_type", "")
+
+        # Check if DEVICE_OFFLINE notifications are disabled
+        if alarm_type == "DEVICE_OFFLINE":
+            try:
+                from app.database import SessionLocal
+                from app.models.device_offline_settings import DeviceOfflineSettings
+                with SessionLocal() as session:
+                    settings = session.query(DeviceOfflineSettings).first()
+                    if settings is not None and not settings.notifications_enabled:
+                        logger.debug(
+                            "DEVICE_OFFLINE notifications disabled, skipping send"
+                        )
+                        return
+            except Exception:
+                logger.exception("Failed to check device offline settings")
+
         notification = Notification(
             type=event.event_type,
             title=payload.get("title") or f"Alarm event: {event.event_type}",

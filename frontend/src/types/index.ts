@@ -139,4 +139,17 @@ export interface TelegramTestResult {
   message: string;
 }
 
+export interface DeviceOfflineAlarmSettings {
+  enabled: boolean;
+  offline_timeout_minutes: number;
+  severity: string;
+  notifications_enabled: boolean;
+}
+
+export interface DeviceOfflineAlarmSettingsUpdate {
+  enabled: boolean;
+  offline_timeout_minutes: number;
+  severity: string;
+  notifications_enabled: boolean;
+}
 

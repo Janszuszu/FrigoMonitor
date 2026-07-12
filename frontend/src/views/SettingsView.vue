@@ -2,8 +2,15 @@
 import { onMounted, reactive, ref, computed } from "vue";
 
 import { useAlarmsStore } from "@/stores/alarms";
-import { updateAllAlarmSettings, fetchTelegramSettings, updateTelegramSettings, testTelegramNotification } from "@/services/api";
-import type { AlarmSettings, TelegramSettings as TelegramSettingsType } from "@/types";
+import {
+  updateAllAlarmSettings,
+  fetchTelegramSettings,
+  updateTelegramSettings,
+  testTelegramNotification,
+  fetchDeviceOfflineAlarmSettings,
+  updateDeviceOfflineAlarmSettings,
+} from "@/services/api";
+import type { AlarmSettings, TelegramSettings as TelegramSettingsType, DeviceOfflineAlarmSettings } from "@/types";
 
 const alarmsStore = useAlarmsStore();
 
@@ -15,6 +22,10 @@ const saveError = ref<string | null>(null);
 
 // Deep clone of original settings for change detection
 const originalSettings = ref<string>("");
+
+function markDirty(): void {
+  dirty.value = true;
+}
 
 // Telegram state
 const telegramForm = reactive({
@@ -29,6 +40,20 @@ const telegramTesting = ref(false);
 const telegramMessage = ref<string | null>(null);
 const telegramError = ref<string | null>(null);
 const showToken = ref(false);
+
+// Device Offline Alarm state
+const deviceOfflineForm = reactive({
+  enabled: true,
+  offline_timeout_minutes: 5,
+  severity: "CRITICAL",
+  notifications_enabled: true,
+});
+
+const deviceOfflineSaving = ref(false);
+const deviceOfflineMessage = ref<string | null>(null);
+const deviceOfflineError = ref<string | null>(null);
+
+const VALID_SEVERITIES = ["INFO", "WARNING", "CRITICAL"] as const;
 
 async function loadTelegramSettings(): Promise<void> {
   try {
@@ -169,10 +194,63 @@ async function saveAllAlarmSettings(): Promise<void> {
   }
 }
 
+async function loadDeviceOfflineSettings(): Promise<void> {
+  try {
+    const settings = await fetchDeviceOfflineAlarmSettings();
+    deviceOfflineForm.enabled = settings.enabled;
+    deviceOfflineForm.offline_timeout_minutes = settings.offline_timeout_minutes;
+    deviceOfflineForm.severity = settings.severity;
+    deviceOfflineForm.notifications_enabled = settings.notifications_enabled;
+  } catch (err) {
+    console.error("Failed to load device offline alarm settings", err);
+  }
+}
+
+async function saveDeviceOfflineSettings(): Promise<void> {
+  deviceOfflineSaving.value = true;
+  deviceOfflineMessage.value = null;
+  deviceOfflineError.value = null;
+
+  // Validate timeout
+  if (deviceOfflineForm.offline_timeout_minutes < 1) {
+    deviceOfflineError.value = "Offline timeout must be at least 1 minute.";
+    deviceOfflineSaving.value = false;
+    return;
+  }
+
+  // Validate severity
+  if (!VALID_SEVERITIES.includes(deviceOfflineForm.severity as typeof VALID_SEVERITIES[number])) {
+    deviceOfflineError.value = `Invalid severity. Must be one of: ${VALID_SEVERITIES.join(", ")}`;
+    deviceOfflineSaving.value = false;
+    return;
+  }
+
+  try {
+    const result = await updateDeviceOfflineAlarmSettings({
+      enabled: deviceOfflineForm.enabled,
+      offline_timeout_minutes: deviceOfflineForm.offline_timeout_minutes,
+      severity: deviceOfflineForm.severity,
+      notifications_enabled: deviceOfflineForm.notifications_enabled,
+    });
+    deviceOfflineForm.enabled = result.enabled;
+    deviceOfflineForm.offline_timeout_minutes = result.offline_timeout_minutes;
+    deviceOfflineForm.severity = result.severity;
+    deviceOfflineForm.notifications_enabled = result.notifications_enabled;
+    deviceOfflineMessage.value = "Device offline alarm settings saved successfully.";
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to save device offline alarm settings";
+    deviceOfflineError.value = message;
+    console.error("Failed to save device offline alarm settings", err);
+  } finally {
+    deviceOfflineSaving.value = false;
+  }
+}
+
 onMounted(async () => {
   await alarmsStore.loadSettings();
   originalSettings.value = JSON.stringify(alarmsStore.settings);
   await loadTelegramSettings();
+  await loadDeviceOfflineSettings();
 });
 </script>
 
@@ -183,9 +261,98 @@ onMounted(async () => {
         Settings
       </h2>
       <p class="text-sm text-fm-muted">
-        Configure Telegram notifications and alarm thresholds.
+        Configure Telegram notifications, device offline detection, and alarm thresholds.
       </p>
     </header>
+
+    <!-- Device Offline Alarm Section -->
+    <section class="space-y-4">
+      <header>
+        <h3 class="text-xl font-semibold">
+          Device Offline Alarm
+        </h3>
+        <p class="text-sm text-fm-muted">
+          Detect when a device stops communicating and create an alarm.
+        </p>
+      </header>
+
+      <div class="max-w-3xl space-y-4 rounded-xl border border-slate-800 bg-fm-panelSoft p-6">
+        <!-- Enabled -->
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            v-model="deviceOfflineForm.enabled"
+            type="checkbox"
+            class="rounded border-slate-700 bg-fm-panel text-fm-accent"
+          >
+          <span class="font-medium text-fm-muted">Enabled</span>
+        </label>
+
+        <!-- Offline Timeout -->
+        <label class="block space-y-1 text-sm">
+          <span class="font-medium text-fm-muted">Offline timeout (minutes)</span>
+          <input
+            v-model.number="deviceOfflineForm.offline_timeout_minutes"
+            type="number"
+            min="1"
+            step="1"
+            class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 text-fm-text outline-none focus:border-fm-accent"
+            placeholder="5"
+          >
+        </label>
+
+        <!-- Severity -->
+        <label class="block space-y-1 text-sm">
+          <span class="font-medium text-fm-muted">Severity</span>
+          <select
+            v-model="deviceOfflineForm.severity"
+            class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-2 text-fm-text outline-none focus:border-fm-accent"
+          >
+            <option
+              v-for="sev in VALID_SEVERITIES"
+              :key="sev"
+              :value="sev"
+            >
+              {{ sev }}
+            </option>
+          </select>
+        </label>
+
+        <!-- Notifications -->
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            v-model="deviceOfflineForm.notifications_enabled"
+            type="checkbox"
+            class="rounded border-slate-700 bg-fm-panel text-fm-accent"
+          >
+          <span class="font-medium text-fm-muted">Notifications</span>
+        </label>
+
+        <!-- Action buttons -->
+        <div class="flex flex-wrap items-center gap-3 pt-2">
+          <button
+            :disabled="deviceOfflineSaving"
+            class="rounded-lg bg-fm-accent px-4 py-2 text-sm font-semibold text-slate-900 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            @click="saveDeviceOfflineSettings"
+          >
+            {{ deviceOfflineSaving ? "Saving..." : "Save Device Offline Settings" }}
+          </button>
+        </div>
+
+        <!-- Status messages -->
+        <p
+          v-if="deviceOfflineMessage"
+          class="text-sm font-medium text-green-400"
+        >
+          {{ deviceOfflineMessage }}
+        </p>
+        <p
+          v-if="deviceOfflineError"
+          class="text-sm font-medium text-red-400"
+        >
+          {{ deviceOfflineError }}
+        </p>
+      </div>
+    </section>
 
     <!-- Telegram Notifications Section -->
     <section class="space-y-4">

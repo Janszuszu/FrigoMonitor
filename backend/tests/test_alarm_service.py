@@ -13,7 +13,6 @@ from sqlalchemy.orm import sessionmaker
 from app.database import Base
 from app.models.device import Device
 from app.models.sensor import Sensor
-from app.models.alarm import Alarm
 from app.models.alarm_event import AlarmEvent
 from app.services.alarm_service import AlarmService, AlarmState
 

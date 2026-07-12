@@ -31,6 +31,7 @@ class DeviceRead(BaseModel):
 	location: Optional[str]
 	created_at: Optional[datetime]
 	last_seen: Optional[datetime]
+	online: bool = True
 
 	class Config:
 		orm_mode = True

@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import type { AlarmSettings, ActiveAlarm, AlarmHistoryItem, Device, Measurement, NetworkSettings, Sensor, SystemHealth, TelegramSettings, TelegramSettingsUpdate, TelegramTestResult } from "@/types";
+import type { AlarmSettings, ActiveAlarm, AlarmHistoryItem, Device, DeviceOfflineAlarmSettings, DeviceOfflineAlarmSettingsUpdate, Measurement, NetworkSettings, Sensor, SystemHealth, TelegramSettings, TelegramSettingsUpdate, TelegramTestResult } from "@/types";
 
 export interface MeasurementHistoryParams {
   sensorId?: number;
@@ -148,6 +148,18 @@ export async function updateTelegramSettings(data: TelegramSettingsUpdate): Prom
 
 export async function testTelegramNotification(data: TelegramSettingsUpdate): Promise<TelegramTestResult> {
   const response = await api.post<TelegramTestResult>("/telegram/test", data);
+  return response.data;
+}
+
+export async function fetchDeviceOfflineAlarmSettings(): Promise<DeviceOfflineAlarmSettings> {
+  const response = await api.get<DeviceOfflineAlarmSettings>("/settings/device-offline-alarm");
+  return response.data;
+}
+
+export async function updateDeviceOfflineAlarmSettings(
+  data: DeviceOfflineAlarmSettingsUpdate,
+): Promise<DeviceOfflineAlarmSettings> {
+  const response = await api.put<DeviceOfflineAlarmSettings>("/settings/device-offline-alarm", data);
   return response.data;
 }
 

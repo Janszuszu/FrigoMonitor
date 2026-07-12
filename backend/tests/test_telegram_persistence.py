@@ -7,7 +7,7 @@ because it is stored in the database (AlarmEvent.telegram_notification_sent_at).
 import sys
 import os
 from datetime import datetime, UTC, timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.getcwd(), "backend"))
 
@@ -376,7 +376,7 @@ class TestTelegramPersistence:
             assert _has_notification_been_sent(session, sensor.id, AlarmState.ALARM_HIGH) is False
 
             # Create active alarm without notification
-            event_id = _create_active_alarm_event(session, sensor, device, AlarmState.ALARM_HIGH)
+            _create_active_alarm_event(session, sensor, device, AlarmState.ALARM_HIGH)
             assert _has_notification_been_sent(session, sensor.id, AlarmState.ALARM_HIGH) is False
 
             # Mark notification as sent
