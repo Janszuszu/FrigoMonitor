@@ -170,7 +170,7 @@ def update_all_alarm_settings(payload: List[AlarmSettingsUpdate], db: Session = 
 @router.get("/alarms/active", response_model=List[ActiveAlarmRead])
 def get_active_alarms(db: Session = Depends(get_db)):
     """Get currently active alarms."""
-    active_states = ["PENDING_HIGH", "PENDING_LOW", "ALARM_HIGH", "ALARM_LOW", "NO_DATA"]
+    active_states = ["PENDING_HIGH", "PENDING_LOW", "ALARM_HIGH", "ALARM_LOW", "NO_DATA", "ACTIVE"]
 
     events = (
         db.query(AlarmEvent)
@@ -181,7 +181,7 @@ def get_active_alarms(db: Session = Depends(get_db)):
 
     result = []
     for event in events:
-        sensor = db.query(Sensor).filter(Sensor.id == event.sensor_id).first()
+        sensor = db.query(Sensor).filter(Sensor.id == event.sensor_id).first() if event.sensor_id else None
         device = db.query(Device).filter(Device.id == event.device_id).first() if event.device_id else None
         result.append(
             ActiveAlarmRead(
@@ -218,7 +218,7 @@ def get_alarm_history(
 
     result = []
     for event in events:
-        sensor = db.query(Sensor).filter(Sensor.id == event.sensor_id).first()
+        sensor = db.query(Sensor).filter(Sensor.id == event.sensor_id).first() if event.sensor_id else None
         device = db.query(Device).filter(Device.id == event.device_id).first() if event.device_id else None
         result.append(
             AlarmHistoryRead(

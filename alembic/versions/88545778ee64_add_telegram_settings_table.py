@@ -3,6 +3,9 @@
 Revision ID: 88545778ee64
 Revises: 'fm0065_fix_missing_columns'
 Create Date: 2026-07-11 03:08:33.754739
+
+This migration was already applied to production via Base.metadata.create_all.
+This is a stub to satisfy the alembic dependency chain.
 """
 
 from alembic import op
@@ -17,14 +20,9 @@ depends_on = None
 
 
 def upgrade():
-    op.create_table(
-        'telegram_settings',
-        sa.Column('id', sa.Integer(), primary_key=True, index=True),
-        sa.Column('enabled', sa.Boolean(), nullable=False, default=False),
-        sa.Column('bot_token', sa.String(length=255), nullable=False, default=''),
-        sa.Column('chat_id', sa.String(length=100), nullable=False, default=''),
-    )
+    # telegram_settings table already exists in production
+    pass
 
 
 def downgrade():
-    op.drop_table('telegram_settings')
+    pass

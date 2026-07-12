@@ -53,6 +53,9 @@ function getAlarmBadgeClass(alarmType: string): string {
   if (alarmType.includes("PENDING")) {
     return "border-yellow-500/60 bg-yellow-500/20 text-yellow-400";
   }
+  if (alarmType === "DEVICE_OFFLINE") {
+    return "border-fm-danger/60 bg-fm-danger/20 text-fm-danger";
+  }
   return "border-slate-700 bg-slate-800/70 text-fm-muted";
 }
 
@@ -68,9 +71,15 @@ function getAlarmTypeLabel(alarmType: string): string {
       return "PENDING LOW";
     case "NO_DATA":
       return "NO DATA";
+    case "DEVICE_OFFLINE":
+      return "DEVICE OFFLINE";
     default:
       return alarmType;
   }
+}
+
+function isDeviceAlarm(alarm: { alarm_type: string }): boolean {
+  return alarm.alarm_type === "DEVICE_OFFLINE";
 }
 
 async function handleResetAlarm(alarmId: number): Promise<void> {
@@ -199,12 +208,6 @@ onMounted(async () => {
                 <span class="whitespace-nowrap">Alarm Type</span>
               </th>
               <th class="px-4 py-3">
-                Current Temperature
-              </th>
-              <th class="px-4 py-3">
-                Threshold
-              </th>
-              <th class="px-4 py-3">
                 Active Since
               </th>
               <th class="px-4 py-3">
@@ -228,7 +231,7 @@ onMounted(async () => {
                 {{ getDeviceName(alarm) }}
               </td>
               <td class="px-4 py-3 text-fm-text">
-                {{ alarm.sensor_name }}
+                {{ isDeviceAlarm(alarm) ? "N/A" : alarm.sensor_name }}
               </td>
               <td class="px-4 py-3">
                 <span
@@ -237,12 +240,6 @@ onMounted(async () => {
                 >
                   {{ getAlarmTypeLabel(alarm.alarm_type) }}
                 </span>
-              </td>
-              <td class="px-4 py-3 text-fm-text">
-                {{ alarm.temperature !== null ? `${alarm.temperature.toFixed(1)}°C` : "-" }}
-              </td>
-              <td class="px-4 py-3 text-fm-muted">
-                {{ alarm.threshold !== null ? `${alarm.threshold.toFixed(1)}°C` : "-" }}
               </td>
               <td class="px-4 py-3 text-fm-muted">
                 {{ formatTime(alarm.activated_at || alarm.pending_start) }}
@@ -271,7 +268,7 @@ onMounted(async () => {
             </tr>
             <tr v-if="alarmsStore.activeAlarms.length === 0">
               <td
-                colspan="9"
+                colspan="7"
                 class="px-4 py-6 text-center text-fm-muted"
               >
                 No active alarms
@@ -324,7 +321,7 @@ onMounted(async () => {
                 {{ getDeviceName(event) }}
               </td>
               <td class="px-4 py-3 text-fm-text">
-                {{ event.sensor_name }}
+                {{ isDeviceAlarm(event) ? "N/A" : event.sensor_name }}
               </td>
               <td class="px-4 py-3">
                 <span
@@ -335,10 +332,10 @@ onMounted(async () => {
                 </span>
               </td>
               <td class="px-4 py-3 text-fm-text">
-                {{ event.temperature !== null ? `${event.temperature.toFixed(1)}°C` : "-" }}
+                {{ isDeviceAlarm(event) ? "-" : (event.temperature !== null ? `${event.temperature.toFixed(1)}°C` : "-") }}
               </td>
               <td class="px-4 py-3 text-fm-muted">
-                {{ event.threshold !== null ? `${event.threshold.toFixed(1)}°C` : "-" }}
+                {{ isDeviceAlarm(event) ? "-" : (event.threshold !== null ? `${event.threshold.toFixed(1)}°C` : "-") }}
               </td>
               <td class="px-4 py-3 text-fm-muted">
                 {{ formatTime(event.activated_at || event.pending_start) }}

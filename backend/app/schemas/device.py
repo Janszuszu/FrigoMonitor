@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, field_serializer
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class DeviceCreate(BaseModel):
@@ -31,6 +31,15 @@ class DeviceRead(BaseModel):
 	location: Optional[str]
 	created_at: Optional[datetime]
 	last_seen: Optional[datetime]
+	online: bool = True
+
+	@field_serializer("last_seen", "created_at")
+	def serialize_datetime_utc(self, value: Optional[datetime]) -> Optional[str]:
+		if value is None:
+			return None
+		if value.tzinfo is None:
+			value = value.replace(tzinfo=timezone.utc)
+		return value.isoformat().replace("+00:00", "Z")
 
 	class Config:
 		orm_mode = True

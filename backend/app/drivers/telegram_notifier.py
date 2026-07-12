@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Optional
 from urllib import error, parse, request
 
-from app.config import settings
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.database import SessionLocal
 from app.logger import logger
 from app.models.notification import Notification
+from app.models.telegram_settings import TelegramSettings
 from app.services.notification_service import Notifier
 
 SEVERITY_ICONS = {
@@ -15,17 +19,36 @@ SEVERITY_ICONS = {
 }
 
 
+def _load_telegram_settings() -> tuple[bool, str, str]:
+    """Load Telegram settings from database, falling back to env vars."""
+    try:
+        with SessionLocal() as session:
+            row = session.query(TelegramSettings).first()
+            if row is not None:
+                return row.enabled, row.bot_token or "", row.chat_id or ""
+    except SQLAlchemyError:
+        logger.exception("Failed to load Telegram settings from DB")
+
+    from app.config import settings as app_settings
+    return (
+        app_settings.TELEGRAM_ENABLED,
+        app_settings.TELEGRAM_BOT_TOKEN,
+        app_settings.TELEGRAM_CHAT_ID,
+    )
+
+
 class TelegramNotifier(Notifier):
     def __init__(self, timeout_seconds: int = 10) -> None:
         self.timeout_seconds = timeout_seconds
 
     def send(self, notification: Notification) -> bool:
-        if not settings.TELEGRAM_ENABLED:
+        enabled, token, chat_id = _load_telegram_settings()
+        if not enabled:
             logger.warning("Telegram disabled")
             return False
 
-        token = settings.TELEGRAM_BOT_TOKEN.strip()
-        chat_id = settings.TELEGRAM_CHAT_ID.strip()
+        token = token.strip()
+        chat_id = chat_id.strip()
         if not token or not chat_id:
             logger.error("Telegram API error")
             return False

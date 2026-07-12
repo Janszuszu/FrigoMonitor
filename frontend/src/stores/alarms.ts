@@ -57,15 +57,14 @@ export const useAlarmsStore = defineStore("alarms", () => {
     if (!payload) {
       return;
     }
-    const sensorId = Number(payload.sensor_id);
-    if (!Number.isFinite(sensorId)) {
-      return;
+    const sensorId = payload.sensor_id != null ? Number(payload.sensor_id) : null;
+    if (sensorId != null && Number.isFinite(sensorId)) {
+      sensorsStore.patchById(sensorId, {
+        alarm_state: String(payload.alarm_state || payload.state || "ALARM"),
+        alarm_level: String(payload.level || "warning"),
+        last_measurement: timestamp || undefined,
+      });
     }
-    sensorsStore.patchById(sensorId, {
-      alarm_state: String(payload.alarm_state || payload.state || "ALARM"),
-      alarm_level: String(payload.level || "warning"),
-      last_measurement: timestamp || undefined,
-    });
     // Reload active alarms to keep in sync
     loadActiveAlarms();
   }
@@ -74,14 +73,13 @@ export const useAlarmsStore = defineStore("alarms", () => {
     if (!payload) {
       return;
     }
-    const sensorId = Number(payload.sensor_id);
-    if (!Number.isFinite(sensorId)) {
-      return;
+    const sensorId = payload.sensor_id != null ? Number(payload.sensor_id) : null;
+    if (sensorId != null && Number.isFinite(sensorId)) {
+      sensorsStore.patchById(sensorId, {
+        alarm_state: "NORMAL",
+        alarm_level: null,
+      });
     }
-    sensorsStore.patchById(sensorId, {
-      alarm_state: "NORMAL",
-      alarm_level: null,
-    });
     // Reload active alarms to keep in sync
     loadActiveAlarms();
   }

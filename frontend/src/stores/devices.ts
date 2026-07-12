@@ -3,9 +3,6 @@ import { defineStore } from "pinia";
 
 import { fetchDevices, updateDeviceName } from "@/services/api";
 import type { Device } from "@/types";
-import { parseApiTimestampMillis } from "@/utils/time";
-
-const ONLINE_WINDOW_MS = 5 * 60 * 1000;
 
 export const useDevicesStore = defineStore("devices", () => {
   const items = ref<Device[]>([]);
@@ -13,14 +10,7 @@ export const useDevicesStore = defineStore("devices", () => {
   const error = ref<string | null>(null);
 
   const onlineCount = computed(() => {
-    const now = Date.now();
-    return items.value.filter((device) => {
-      const lastSeenMs = parseApiTimestampMillis(device.last_seen);
-      if (lastSeenMs === null) {
-        return false;
-      }
-      return now - lastSeenMs < ONLINE_WINDOW_MS;
-    }).length;
+    return items.value.filter((device) => device.online === true).length;
   });
 
   async function load(): Promise<void> {
@@ -86,6 +76,10 @@ export const useDevicesStore = defineStore("devices", () => {
         payload.ip !== undefined
           ? (payload.ip ? String(payload.ip) : null)
           : current?.ip || null,
+      online:
+        payload.online !== undefined
+          ? Boolean(payload.online)
+          : current?.online ?? undefined,
       status:
         payload.status !== undefined
           ? (payload.status ? String(payload.status) : null)

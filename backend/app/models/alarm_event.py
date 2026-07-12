@@ -10,7 +10,7 @@ class AlarmEvent(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    sensor_id = Column(Integer, ForeignKey("sensors.id"), nullable=False, index=True)
+    sensor_id = Column(Integer, ForeignKey("sensors.id"), nullable=True, index=True)
     device_id = Column(Integer, ForeignKey("devices.id"), nullable=True, index=True)
 
     alarm_type = Column(String(20), nullable=False)

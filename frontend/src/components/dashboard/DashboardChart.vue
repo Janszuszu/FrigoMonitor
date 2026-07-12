@@ -60,6 +60,10 @@ const dragStartTo = ref(0);
 // Reset to false when data/range changes so the center focus reappears.
 const userInteracted = ref(false);
 
+// The user's explicitly selected measurement point (via click or tap).
+// Persists until another selection, sensor change, or range change.
+const selectedPoint = ref<{ x: number; y: number; point: ParsedPoint } | null>(null);
+
 // Touch gesture state for pinch-to-zoom
 const touchState = ref<{
   initialDist: number;
@@ -67,6 +71,10 @@ const touchState = ref<{
   initialTo: number;
   centerT: number;
 } | null>(null);
+
+// Tap detection: track touch start position to distinguish tap from drag
+const tapStartPos = ref<{ x: number; y: number } | null>(null);
+const TAP_MOVE_THRESHOLD = 10; // pixels of movement before a touch is considered a drag
 
 let resizeObserver: ResizeObserver | null = null;
 
@@ -152,6 +160,7 @@ watch(
       viewFrom.value = null;
       viewTo.value = null;
       hoverState.value = null;
+      selectedPoint.value = null;
       return;
     }
     if (!isZoomed.value || props.liveMode) {
@@ -160,6 +169,8 @@ watch(
     }
     // Reset user interaction flag when data changes so the center focus reappears
     userInteracted.value = false;
+    // Reset selected point when data changes (sensor/range change)
+    selectedPoint.value = null;
   },
   { immediate: true },
 );
@@ -435,10 +446,41 @@ function onPointerMove(event: PointerEvent): void {
   if (localY < padding || localY > chartHeight.value - padding) hoverState.value = null;
 }
 
+function findNearestPoint(localX: number): { x: number; y: number; point: ParsedPoint } | null {
+  if (!normalized.value.length) return null;
+  let nearest = normalized.value[0];
+  let bestDistance = Math.abs(nearest.x - localX);
+  for (const point of normalized.value) {
+    const distance = Math.abs(point.x - localX);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      nearest = point;
+    }
+  }
+  return {
+    x: nearest.x,
+    y: nearest.y,
+    point: { t: nearest.t, value: nearest.value, timestamp: nearest.timestamp },
+  };
+}
+
 function onPointerUp(event: PointerEvent): void {
   if (!isDragging.value) return;
   isDragging.value = false;
   svgRef.value?.releasePointerCapture(event.pointerId);
+
+  // Detect click: if the pointer didn't move significantly, treat it as a selection click
+  if (!svgRef.value || !normalized.value.length) return;
+  const bounds = svgRef.value.getBoundingClientRect();
+  if (bounds.width <= 0) return;
+  const localX = ((event.clientX - bounds.left) / bounds.width) * width;
+  const localY = ((event.clientY - bounds.top) / bounds.height) * chartHeight.value;
+  // Only select if the click is within the plot area (between padding and chartHeight - padding)
+  if (localY < padding || localY > chartHeight.value - padding) return;
+  const nearest = findNearestPoint(localX);
+  if (nearest) {
+    selectedPoint.value = nearest;
+  }
 }
 
 function onPointerLeave(): void {
@@ -749,6 +791,24 @@ const tooltipStyle = computed(() => {
           class="fill-fm-accent stroke-fm-panelSoft"
           stroke-width="2"
         />
+
+        <!-- Selected point marker (persistent selection) -->
+        <g v-if="selectedPoint && !hoverState">
+          <circle
+            :cx="selectedPoint.x"
+            :cy="selectedPoint.y"
+            r="5"
+            class="fill-fm-accent stroke-white"
+            stroke-width="2"
+          />
+          <circle
+            :cx="selectedPoint.x"
+            :cy="selectedPoint.y"
+            r="9"
+            class="fill-none stroke-fm-accent/40"
+            stroke-width="1.5"
+          />
+        </g>
       </svg>
 
       <!-- Tooltip (hover) -->
@@ -779,6 +839,23 @@ const tooltipStyle = computed(() => {
         </div>
         <div class="mt-0.5 text-fm-muted">
           {{ formatTooltipDate(centerPoint.timestamp) }}
+        </div>
+      </div>
+
+      <!-- Selected point tooltip (persistent selection) -->
+      <div
+        v-if="selectedPoint && !hoverState"
+        class="pointer-events-none absolute z-10 max-w-[260px] rounded-md border border-fm-accent/40 bg-slate-950/95 px-2.5 py-1.5 text-xs text-fm-text shadow-panel"
+        :style="{
+          left: Math.max(4, Math.min((selectedPoint.x / width) * 100, 82)) + '%',
+          top: Math.max(6, ((selectedPoint.y / chartHeight) * 100) - 22) + '%',
+        }"
+      >
+        <div class="font-semibold text-fm-accent">
+          {{ selectedPoint.point.value.toFixed(1) }} °C
+        </div>
+        <div class="mt-0.5 text-fm-muted">
+          {{ formatTooltipDate(selectedPoint.point.timestamp) }}
         </div>
       </div>
     </div>

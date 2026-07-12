@@ -2,8 +2,8 @@
 import { onMounted, reactive, ref, computed } from "vue";
 
 import { useAlarmsStore } from "@/stores/alarms";
-import { updateAllAlarmSettings, fetchTelegramSettings, updateTelegramSettings, testTelegramNotification } from "@/services/api";
-import type { AlarmSettings, TelegramSettings as TelegramSettingsType } from "@/types";
+import { updateAllAlarmSettings, fetchTelegramSettings, updateTelegramSettings, testTelegramNotification, fetchDeviceOfflineSettings, updateDeviceOfflineSettings } from "@/services/api";
+import type { AlarmSettings, TelegramSettings as TelegramSettingsType, DeviceOfflineSettings } from "@/types";
 
 const alarmsStore = useAlarmsStore();
 
@@ -29,6 +29,52 @@ const telegramTesting = ref(false);
 const telegramMessage = ref<string | null>(null);
 const telegramError = ref<string | null>(null);
 const showToken = ref(false);
+
+// Device Offline state
+const deviceOfflineForm = reactive({
+  enabled: false,
+  offline_timeout_minutes: 5,
+  severity: "WARNING",
+  notifications_enabled: false,
+});
+
+const deviceOfflineSaving = ref(false);
+const deviceOfflineMessage = ref<string | null>(null);
+const deviceOfflineError = ref<string | null>(null);
+
+async function loadDeviceOfflineSettings(): Promise<void> {
+  try {
+    const settings = await fetchDeviceOfflineSettings();
+    deviceOfflineForm.enabled = settings.enabled;
+    deviceOfflineForm.offline_timeout_minutes = settings.offline_timeout_minutes;
+    deviceOfflineForm.severity = settings.severity;
+    deviceOfflineForm.notifications_enabled = settings.notifications_enabled;
+  } catch (err) {
+    console.error("Failed to load device offline settings", err);
+  }
+}
+
+async function saveDeviceOfflineSettings(): Promise<void> {
+  deviceOfflineSaving.value = true;
+  deviceOfflineMessage.value = null;
+  deviceOfflineError.value = null;
+
+  try {
+    await updateDeviceOfflineSettings({
+      enabled: deviceOfflineForm.enabled,
+      offline_timeout_minutes: deviceOfflineForm.offline_timeout_minutes,
+      severity: deviceOfflineForm.severity,
+      notifications_enabled: deviceOfflineForm.notifications_enabled,
+    });
+    deviceOfflineMessage.value = "Device offline settings saved successfully.";
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to save device offline settings";
+    deviceOfflineError.value = message;
+    console.error("Failed to save device offline settings", err);
+  } finally {
+    deviceOfflineSaving.value = false;
+  }
+}
 
 async function loadTelegramSettings(): Promise<void> {
   try {
@@ -116,6 +162,10 @@ function getAlarmStatusLabel(state: string): string {
   }
 }
 
+function markDirty(): void {
+  dirty.value = true;
+}
+
 function getAlarmStatusClass(state: string): string {
   if (state === "NORMAL") {
     return "text-green-400";
@@ -173,6 +223,7 @@ onMounted(async () => {
   await alarmsStore.loadSettings();
   originalSettings.value = JSON.stringify(alarmsStore.settings);
   await loadTelegramSettings();
+  await loadDeviceOfflineSettings();
 });
 </script>
 
@@ -270,6 +321,93 @@ onMounted(async () => {
           class="text-sm font-medium text-red-400"
         >
           {{ telegramError }}
+        </p>
+      </div>
+    </section>
+
+    <!-- Device Offline Settings Section -->
+    <section class="space-y-4">
+      <header>
+        <h3 class="text-xl font-semibold">
+          Device Offline Detection
+        </h3>
+        <p class="text-sm text-fm-muted">
+          Configure device-level offline detection and alarm settings.
+        </p>
+      </header>
+
+      <div class="max-w-3xl space-y-4 rounded-xl border border-slate-800 bg-fm-panelSoft p-6">
+        <!-- Enabled -->
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            v-model="deviceOfflineForm.enabled"
+            type="checkbox"
+            class="rounded border-slate-700 bg-fm-panel text-fm-accent"
+          >
+          <span class="font-medium text-fm-muted">Enable device offline detection</span>
+        </label>
+
+        <!-- Offline Timeout -->
+        <label class="block space-y-1 text-sm">
+          <span class="font-medium text-fm-muted">Offline timeout (minutes)</span>
+          <input
+            v-model.number="deviceOfflineForm.offline_timeout_minutes"
+            type="number"
+            min="1"
+            step="1"
+            class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-1.5 text-fm-text outline-none focus:border-fm-accent"
+            placeholder="e.g. 5"
+          >
+          <p class="text-xs text-fm-muted">
+            A device is considered offline when no data has been received for this duration.
+          </p>
+        </label>
+
+        <!-- Severity -->
+        <label class="block space-y-1 text-sm">
+          <span class="font-medium text-fm-muted">Severity</span>
+          <select
+            v-model="deviceOfflineForm.severity"
+            class="w-full rounded-lg border border-slate-700 bg-fm-panel px-3 py-1.5 text-fm-text outline-none focus:border-fm-accent"
+          >
+            <option value="WARNING">WARNING</option>
+            <option value="CRITICAL">CRITICAL</option>
+            <option value="INFO">INFO</option>
+          </select>
+        </label>
+
+        <!-- Telegram Notifications Enabled -->
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            v-model="deviceOfflineForm.notifications_enabled"
+            type="checkbox"
+            class="rounded border-slate-700 bg-fm-panel text-fm-accent"
+          >
+          <span class="font-medium text-fm-muted">Send Telegram notifications for device offline events</span>
+        </label>
+
+        <!-- Save Button -->
+        <div class="flex items-center gap-3 pt-2">
+          <button
+            :disabled="deviceOfflineSaving"
+            class="rounded-lg bg-fm-accent px-4 py-2 text-sm font-semibold text-slate-900 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            @click="saveDeviceOfflineSettings"
+          >
+            {{ deviceOfflineSaving ? "Saving..." : "Save Device Offline Settings" }}
+          </button>
+        </div>
+
+        <p
+          v-if="deviceOfflineMessage"
+          class="text-sm font-medium text-green-400"
+        >
+          {{ deviceOfflineMessage }}
+        </p>
+        <p
+          v-if="deviceOfflineError"
+          class="text-sm font-medium text-red-400"
+        >
+          {{ deviceOfflineError }}
         </p>
       </div>
     </section>

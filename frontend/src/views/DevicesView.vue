@@ -1,26 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { onMounted } from "vue";
 
 import DeviceTable from "@/components/DeviceTable.vue";
 import { useDevicesStore } from "@/stores/devices";
-import { parseApiTimestampMillis } from "@/utils/time";
 
 const devicesStore = useDevicesStore();
-
-const onlineIds = computed(() => {
-  const now = Date.now();
-  const set = new Set<number>();
-  for (const item of devicesStore.items) {
-    const lastSeenMs = parseApiTimestampMillis(item.last_seen);
-    if (lastSeenMs === null) {
-      continue;
-    }
-    if (now - lastSeenMs < 5 * 60 * 1000) {
-      set.add(item.id);
-    }
-  }
-  return set;
-});
 
 onMounted(async () => {
   try {
@@ -42,10 +26,7 @@ onMounted(async () => {
       </p>
     </header>
 
-    <DeviceTable
-      :devices="devicesStore.items"
-      :online-device-ids="onlineIds"
-    />
+    <DeviceTable :devices="devicesStore.items" />
 
     <p
       v-if="devicesStore.error"

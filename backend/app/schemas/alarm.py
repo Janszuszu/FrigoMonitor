@@ -35,7 +35,7 @@ class AlarmSettingsUpdate(BaseModel):
 
 class ActiveAlarmRead(BaseModel):
     id: int
-    sensor_id: int
+    sensor_id: Optional[int] = None
     device_id: Optional[int]
     alarm_type: str
     threshold: Optional[float]
@@ -65,7 +65,7 @@ class AlarmResetResponse(BaseModel):
 class AlarmHistoryRead(BaseModel):
 
     id: int
-    sensor_id: int
+    sensor_id: Optional[int] = None
     device_id: Optional[int]
     alarm_type: str
     threshold: Optional[float]

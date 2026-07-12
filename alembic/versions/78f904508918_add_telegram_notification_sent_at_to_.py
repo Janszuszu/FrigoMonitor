@@ -3,6 +3,9 @@
 Revision ID: 78f904508918
 Revises: '88545778ee64'
 Create Date: 2026-07-11 03:33:14.201127
+
+This migration was already applied to production via Base.metadata.create_all.
+This is a stub to satisfy the alembic dependency chain.
 """
 
 from alembic import op
@@ -16,11 +19,9 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
-        'alarm_events',
-        sa.Column('telegram_notification_sent_at', sa.DateTime(timezone=True), nullable=True),
-    )
+    # telegram_notification_sent_at column already exists in production
+    pass
 
 
 def downgrade():
-    op.drop_column('alarm_events', 'telegram_notification_sent_at')
+    pass

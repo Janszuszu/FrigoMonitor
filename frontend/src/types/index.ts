@@ -10,6 +10,7 @@ export interface Device {
   firmware?: string | null;
   ip?: string | null;
   status?: string | null;
+  online?: boolean;
 }
 
 export interface Sensor {
@@ -84,7 +85,7 @@ export interface AlarmSettings {
 
 export interface ActiveAlarm {
   id: number;
-  sensor_id: number;
+  sensor_id: number | null;
   device_id: number | null;
   alarm_type: string;
   threshold: number | null;
@@ -101,7 +102,7 @@ export interface ActiveAlarm {
 
 export interface AlarmHistoryItem {
   id: number;
-  sensor_id: number;
+  sensor_id: number | null;
   device_id: number | null;
   alarm_type: string;
   threshold: number | null;
@@ -137,6 +138,13 @@ export interface TelegramSettingsUpdate {
 export interface TelegramTestResult {
   success: boolean;
   message: string;
+}
+
+export interface DeviceOfflineSettings {
+  enabled: boolean;
+  offline_timeout_minutes: number;
+  severity: string;
+  notifications_enabled: boolean;
 }
 
 

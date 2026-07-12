@@ -98,10 +98,8 @@ const sensorUnit = computed(() => {
 });
 
 const isOnline = computed(() => {
-  if (!selectedSensor.value) return false;
-  const lastMeas = parseApiTimestampMillis(selectedSensor.value.last_measurement);
-  if (lastMeas === null) return false;
-  return Date.now() - lastMeas < 10 * 60 * 1000;
+  if (!selectedDevice.value) return false;
+  return selectedDevice.value.online === true;
 });
 
 const lastUpdate = computed(() => {

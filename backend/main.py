@@ -3,11 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 from app.logger import logger
-from app.api import system, devices, sensors, measurements, alarms, telegram
+from app.api import system, devices, sensors, measurements, alarms, telegram, device_offline
 from app.services.device_manager import device_manager as _device_manager
 from app.services.modbus_rtu_service import modbus_rtu_service
 from app.services.nt57b08_service import nt57b08_service
 from app.services.mqtt_service import mqtt_service
+from app.services.device_offline_monitor import device_offline_monitor
+from app.services.notification_service import notification_service
 from app.ws.websocket_manager import router as websocket_router
 
 _ = _device_manager
@@ -31,10 +33,12 @@ def startup():
     mqtt_service.connect()
     modbus_rtu_service.start()
     nt57b08_service.start()
+    device_offline_monitor.start()
 
 
 @app.on_event("shutdown")
 def shutdown():
+    device_offline_monitor.stop()
     nt57b08_service.stop()
     modbus_rtu_service.stop()
     mqtt_service.disconnect()
@@ -57,4 +61,5 @@ app.include_router(sensors.router, prefix="/api/v1")
 app.include_router(measurements.router, prefix="/api/v1")
 app.include_router(alarms.router, prefix="/api/v1")
 app.include_router(telegram.router, prefix="/api/v1")
+app.include_router(device_offline.router, prefix="/api/v1")
 app.include_router(websocket_router)

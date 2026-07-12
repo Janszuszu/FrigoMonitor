@@ -6,7 +6,6 @@ import { useDevicesStore } from "@/stores/devices";
 
 defineProps<{
   devices: Device[];
-  onlineDeviceIds: Set<number>;
 }>();
 
 const devicesStore = useDevicesStore();
@@ -65,12 +64,6 @@ function formatTime(value: string | null | undefined): string {
           </th>
           <th class="px-4 py-3">
             Status
-          </th>
-          <th class="px-4 py-3">
-            IP
-          </th>
-          <th class="px-4 py-3">
-            Firmware
           </th>
           <th class="px-4 py-3">
             Last Seen
@@ -136,16 +129,10 @@ function formatTime(value: string | null | undefined): string {
           <td class="px-4 py-3">
             <span
               class="rounded-full px-2 py-1 text-xs font-semibold"
-              :class="onlineDeviceIds.has(device.id) ? 'bg-fm-success/20 text-fm-success' : 'bg-fm-danger/20 text-fm-danger'"
+              :class="device.online ? 'bg-fm-success/20 text-fm-success' : 'bg-fm-danger/20 text-fm-danger'"
             >
-              {{ onlineDeviceIds.has(device.id) ? "Online" : "Offline" }}
+              {{ device.online ? "Online" : "Offline" }}
             </span>
-          </td>
-          <td class="px-4 py-3 text-fm-muted">
-            {{ device.ip || "-" }}
-          </td>
-          <td class="px-4 py-3 text-fm-muted">
-            {{ device.firmware || "-" }}
           </td>
           <td class="px-4 py-3 text-fm-muted">
             {{ formatTime(device.last_seen) }}

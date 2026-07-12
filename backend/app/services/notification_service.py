@@ -62,8 +62,7 @@ class NotificationService:
         self._bus.subscribe(EVENT_ALARM_PENDING, self._handle_alarm_event)
         self._bus.subscribe(EVENT_ALARM_ACTIVE, self._handle_alarm_event)
         self._bus.subscribe(EVENT_ALARM_CLEARED, self._handle_alarm_event)
-        if settings.TELEGRAM_ENABLED:
-            self.register_driver(TelegramNotifier())
+        self.register_driver(TelegramNotifier())
 
     def register_driver(self, driver: Notifier) -> None:
         with self._lock:
@@ -149,6 +148,11 @@ class NotificationService:
 
     def _handle_alarm_event(self, event: Event) -> None:
         payload = event.payload or {}
+        # Check if telegram notifications are explicitly disabled for this event
+        telegram_enabled = payload.get("telegram_enabled", True)
+        if not telegram_enabled:
+            logger.debug("Telegram notification disabled for event %s", event.event_type)
+            return
         notification = Notification(
             type=event.event_type,
             title=payload.get("title") or f"Alarm event: {event.event_type}",
