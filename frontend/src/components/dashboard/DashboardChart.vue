@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue";
+import { parseApiTimestampMillis } from "@/utils/time";
 
 type ChartPoint = {
   timestamp: string;
@@ -103,11 +104,14 @@ onBeforeUnmount(() => {
 
 const parsedPoints = computed<ParsedPoint[]>(() => {
   const valid = props.points
-    .map((point) => ({
-      t: new Date(point.timestamp).getTime(),
-      timestamp: point.timestamp,
-      value: point.value,
-    }))
+    .map((point) => {
+      const t = parseApiTimestampMillis(point.timestamp);
+      return {
+        t: t ?? Number.NaN,
+        timestamp: point.timestamp,
+        value: point.value,
+      };
+    })
     .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.value));
 
   valid.sort((a, b) => a.t - b.t);
@@ -336,8 +340,8 @@ const xLabels = computed(() => {
   return labels;
 });
 
-function formatShortTime(timestamp: string): string {
-  const date = new Date(timestamp);
+function formatShortTime(epochMs: number): string {
+  const date = new Date(epochMs);
   if (Number.isNaN(date.getTime())) return "--";
   return date.toLocaleString("pl-PL", {
     year: "numeric", month: "2-digit", day: "2-digit",
@@ -345,8 +349,8 @@ function formatShortTime(timestamp: string): string {
   });
 }
 
-function formatTooltipDate(timestamp: string): string {
-  const date = new Date(timestamp);
+function formatTooltipDate(epochMs: number): string {
+  const date = new Date(epochMs);
   if (Number.isNaN(date.getTime())) return "--";
   return date.toLocaleString("pl-PL", {
     weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
@@ -754,7 +758,7 @@ const tooltipStyle = computed(() => {
           :r="normalized.length < 320 ? 2 : 0"
           class="fill-fm-accent/80"
         >
-          <title>{{ point.value.toFixed(2) }} °C @ {{ formatShortTime(point.timestamp) }}</title>
+          <title>{{ point.value.toFixed(2) }} °C @ {{ formatShortTime(point.t) }}</title>
         </circle>
 
         <!-- Center focus marker (shown initially before user interaction) -->
@@ -821,7 +825,7 @@ const tooltipStyle = computed(() => {
           {{ hoverState.point.value.toFixed(1) }} °C
         </div>
         <div class="mt-0.5 text-fm-muted">
-          {{ formatTooltipDate(hoverState.point.timestamp) }}
+          {{ formatTooltipDate(hoverState.point.t) }}
         </div>
       </div>
 
@@ -838,7 +842,7 @@ const tooltipStyle = computed(() => {
           {{ centerPoint.value.toFixed(1) }} °C
         </div>
         <div class="mt-0.5 text-fm-muted">
-          {{ formatTooltipDate(centerPoint.timestamp) }}
+          {{ formatTooltipDate(centerPoint.t) }}
         </div>
       </div>
 
@@ -855,15 +859,15 @@ const tooltipStyle = computed(() => {
           {{ selectedPoint.point.value.toFixed(1) }} °C
         </div>
         <div class="mt-0.5 text-fm-muted">
-          {{ formatTooltipDate(selectedPoint.point.timestamp) }}
+          {{ formatTooltipDate(selectedPoint.point.t) }}
         </div>
       </div>
     </div>
 
     <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-fm-muted/50">
       <span>Scroll: zoom | Drag: pan | Pinch: zoom</span>
-      <span>{{ normalized[0] ? formatShortTime(normalized[0].timestamp) : "--" }}</span>
-      <span>{{ normalized[normalized.length - 1] ? formatShortTime(normalized[normalized.length - 1].timestamp) : "--" }}</span>
+      <span>{{ normalized[0] ? formatShortTime(normalized[0].t) : "--" }}</span>
+      <span>{{ normalized[normalized.length - 1] ? formatShortTime(normalized[normalized.length - 1].t) : "--" }}</span>
     </div>
   </div>
 </template>
