@@ -36,7 +36,7 @@ class SensorAlarmUpdate(BaseModel):
 
 class SensorRead(BaseModel):
 	id: int
-	device_id: int
+	device_id: Optional[int]
 	name: str
 	sensor_id: Optional[str]
 	sensor_type: Optional[str]
