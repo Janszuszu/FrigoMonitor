@@ -55,6 +55,19 @@ const dragStartX = ref(0);
 const dragStartFrom = ref(0);
 const dragStartTo = ref(0);
 
+// Tracks whether the user has actively interacted with the chart.
+// When false, the center focus point is shown instead of the latest point.
+// Reset to false when data/range changes so the center focus reappears.
+const userInteracted = ref(false);
+
+// Touch gesture state for pinch-to-zoom
+const touchState = ref<{
+  initialDist: number;
+  initialFrom: number;
+  initialTo: number;
+  centerT: number;
+} | null>(null);
+
 let resizeObserver: ResizeObserver | null = null;
 
 function updateContainerWidth(): void {
@@ -145,6 +158,8 @@ watch(
       viewFrom.value = fullDomain.value.from;
       viewTo.value = fullDomain.value.to;
     }
+    // Reset user interaction flag when data changes so the center focus reappears
+    userInteracted.value = false;
   },
   { immediate: true },
 );
@@ -186,7 +201,25 @@ function downsampleMinMax(points: ParsedPoint[], targetPoints: number): ParsedPo
 
 const sampledVisiblePoints = computed(() => downsampleMinMax(visiblePoints.value, MAX_RENDER_POINTS));
 
-const chartHeight = computed(() => props.fullscreen ? Math.max(400, containerWidth.value * 0.5) : props.height);
+// Responsive chart height: mobile gets ~300-380px, desktop gets the prop value
+const chartHeight = computed(() => {
+  if (props.fullscreen) {
+    // In fullscreen, calculate height based on available viewport height
+    // minus space for header (~40px), controls/buttons (~40px), footer (~30px),
+    // and container padding (2rem = ~32px)
+    const HEADER_H = 40;
+    const CONTROLS_H = 40;
+    const FOOTER_H = 30;
+    const PADDING_H = 32;
+    const available = window.innerHeight - HEADER_H - CONTROLS_H - FOOTER_H - PADDING_H;
+    return Math.max(300, available);
+  }
+  // On narrow screens (mobile), use a taller relative height
+  if (containerWidth.value < 640) {
+    return Math.max(300, Math.min(380, containerWidth.value * 0.75));
+  }
+  return props.height;
+});
 
 const normalized = computed(() => {
   if (!activeDomain.value || !fullDomain.value || sampledVisiblePoints.value.length === 0) return [] as Array<ParsedPoint & { x: number; y: number }>;
@@ -210,7 +243,7 @@ const pathD = computed(() => {
     .join(" ");
 });
 
-// Y axis ticks - dynamic based on value range
+// Y axis ticks - dynamic based on value range, with sensible count for mobile
 const yTicks = computed(() => {
   if (!fullDomain.value) return [];
   const range = fullDomain.value.max - fullDomain.value.min;
@@ -220,6 +253,16 @@ const yTicks = computed(() => {
   const start = Math.ceil(fullDomain.value.min / niceStep) * niceStep;
   for (let v = start; v <= fullDomain.value.max; v += niceStep) {
     ticks.push(Math.round(v * 100) / 100);
+  }
+  // Limit ticks on mobile to prevent clipping
+  const isMobile = containerWidth.value < 640;
+  if (isMobile && ticks.length > 5) {
+    const reduced: number[] = [];
+    const stepIdx = Math.ceil(ticks.length / 5);
+    for (let i = 0; i < ticks.length; i += stepIdx) {
+      reduced.push(ticks[i]);
+    }
+    return reduced;
   }
   return ticks;
 });
@@ -249,11 +292,14 @@ const alarmHighY = computed(() => {
   return padding + ((fullDomain.value.max - props.alarmHigh) / valueSpan) * innerH;
 });
 
-// X axis time labels
+// X axis time labels - responsive count and formatting
 const xLabels = computed(() => {
   if (!activeDomain.value) return [];
   const span = activeDomain.value.to - activeDomain.value.from;
-  const count = Math.min(8, Math.max(3, Math.floor(containerWidth.value / 120)));
+  const isMobile = containerWidth.value < 640;
+  // Fewer labels on mobile
+  const maxLabels = isMobile ? 4 : 8;
+  const count = Math.min(maxLabels, Math.max(2, Math.floor(containerWidth.value / (isMobile ? 160 : 120))));
   const labels: { x: number; text: string }[] = [];
   const innerW = width - padding - rightPadding;
   for (let i = 0; i <= count; i++) {
@@ -262,11 +308,17 @@ const xLabels = computed(() => {
     const d = new Date(t);
     let text: string;
     if (span <= 3600000) {
-      text = d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    } else if (span <= 86400000) {
+      // 1H or less: HH:mm
       text = d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
+    } else if (span <= 86400000) {
+      // Up to 24H: HH:mm
+      text = d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
+    } else if (span <= 604800000) {
+      // Up to 7D: dd.MM HH:mm
+      text = d.toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
     } else {
-      text = d.toLocaleString("pl-PL", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+      // 30D: dd.MM
+      text = d.toLocaleString("pl-PL", { day: "2-digit", month: "2-digit" });
     }
     labels.push({ x, text });
   }
@@ -329,6 +381,7 @@ function xToTimestamp(clientX: number): number | null {
 
 function onWheel(event: WheelEvent): void {
   if (!activeDomain.value || !fullDomain.value) return;
+  userInteracted.value = true;
   const centerT = xToTimestamp(event.clientX);
   if (centerT === null) return;
   const zoomFactor = event.deltaY > 0 ? 1.18 : 0.82;
@@ -343,6 +396,7 @@ function onWheel(event: WheelEvent): void {
 
 function onPointerDown(event: PointerEvent): void {
   if (event.button !== 0 || !activeDomain.value) return;
+  userInteracted.value = true;
   isDragging.value = true;
   dragStartX.value = event.clientX;
   dragStartFrom.value = activeDomain.value.from;
@@ -367,6 +421,8 @@ function onPointerMove(event: PointerEvent): void {
 
   if (!normalized.value.length) { hoverState.value = null; return; }
 
+  userInteracted.value = true;
+
   let nearest = normalized.value[0];
   let bestDistance = Math.abs(nearest.x - localX);
   for (const point of normalized.value) {
@@ -389,10 +445,92 @@ function onPointerLeave(): void {
   if (!isDragging.value) hoverState.value = null;
 }
 
-// Latest value marker
-const latestPoint = computed(() => {
+// Touch gesture handlers for pinch-to-zoom
+function onTouchStart(event: TouchEvent): void {
+  if (event.touches.length === 2 && activeDomain.value) {
+    userInteracted.value = true;
+    event.preventDefault();
+    const t1 = event.touches[0];
+    const t2 = event.touches[1];
+    const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+    const centerX = (t1.clientX + t2.clientX) / 2;
+    const centerT = xToTimestamp(centerX);
+    if (centerT === null) return;
+    touchState.value = {
+      initialDist: dist,
+      initialFrom: activeDomain.value.from,
+      initialTo: activeDomain.value.to,
+      centerT,
+    };
+  }
+}
+
+function onTouchMove(event: TouchEvent): void {
+  if (event.touches.length === 2 && touchState.value && activeDomain.value) {
+    event.preventDefault();
+    const t1 = event.touches[0];
+    const t2 = event.touches[1];
+    const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+    const scale = touchState.value.initialDist > 0 ? dist / touchState.value.initialDist : 1;
+    const span = touchState.value.initialTo - touchState.value.initialFrom;
+    const nextSpan = span / scale;
+    const ratioLeft = (touchState.value.centerT - touchState.value.initialFrom) / Math.max(1, span);
+    const nextFrom = touchState.value.centerT - nextSpan * ratioLeft;
+    const nextTo = nextFrom + nextSpan;
+    const clamped = clampDomain(nextFrom, nextTo);
+    if (clamped) {
+      viewFrom.value = clamped.from;
+      viewTo.value = clamped.to;
+    }
+  }
+}
+
+function onTouchEnd(event: TouchEvent): void {
+  if (event.touches.length < 2) {
+    touchState.value = null;
+  }
+}
+
+// Center focus point: finds the measurement closest to the center of the visible time range.
+// This replaces the previous behavior of always focusing on the last (latest) point.
+const centerPoint = computed(() => {
   if (normalized.value.length === 0) return null;
-  return normalized.value[normalized.value.length - 1];
+  if (!activeDomain.value) return null;
+  const centerT = (activeDomain.value.from + activeDomain.value.to) / 2;
+  let nearest = normalized.value[0];
+  let bestDistance = Math.abs(nearest.t - centerT);
+  for (const point of normalized.value) {
+    const distance = Math.abs(point.t - centerT);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      nearest = point;
+    }
+  }
+  return nearest;
+});
+
+// Tooltip position - responsive to avoid overflow
+const tooltipStyle = computed(() => {
+  if (!hoverState.value) return {};
+  const isMobile = containerWidth.value < 640;
+  const leftPct = (hoverState.value.x / width) * 100;
+  const topPct = (hoverState.value.y / chartHeight.value) * 100;
+
+  // On mobile, position tooltip above the point if near bottom
+  let top: number;
+  if (isMobile && topPct > 60) {
+    top = topPct - 28;
+  } else {
+    top = Math.max(6, topPct - 22);
+  }
+
+  // Keep tooltip within bounds
+  const left = Math.max(4, Math.min(leftPct, isMobile ? 70 : 82));
+
+  return {
+    left: `${left}%`,
+    top: `${top}%`,
+  };
 });
 </script>
 
@@ -411,10 +549,14 @@ const latestPoint = computed(() => {
         <button
           v-if="isZoomed"
           type="button"
-          class="rounded-md border border-slate-600/60 bg-slate-900/80 px-3 py-1 font-semibold text-fm-text hover:border-fm-accent/60"
+          class="flex items-center gap-1 rounded-md border border-slate-600/60 bg-slate-900/80 px-2 py-1 text-[10px] font-semibold text-fm-text hover:border-fm-accent/60"
           @click="resetZoom"
+          title="Reset zoom"
         >
-          Reset zoom
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+          <span class="hidden sm:inline">Reset zoom</span>
         </button>
         <button
           type="button"
@@ -435,7 +577,7 @@ const latestPoint = computed(() => {
     <div class="relative flex-1">
       <svg
         ref="svgRef"
-        class="h-auto w-full"
+        class="h-auto w-full touch-pan-y"
         :viewBox="`0 0 ${width} ${chartHeight}`"
         role="img"
         aria-label="Temperature trend chart"
@@ -446,6 +588,9 @@ const latestPoint = computed(() => {
         @pointerup="onPointerUp"
         @pointercancel="onPointerUp"
         @pointerleave="onPointerLeave"
+        @touchstart="onTouchStart"
+        @touchmove="onTouchMove"
+        @touchend="onTouchEnd"
       >
         <!-- Grid lines -->
         <g>
@@ -570,29 +715,29 @@ const latestPoint = computed(() => {
           <title>{{ point.value.toFixed(2) }} °C @ {{ formatShortTime(point.timestamp) }}</title>
         </circle>
 
-        <!-- Latest value marker -->
-        <g v-if="latestPoint && !hoverState">
+        <!-- Center focus marker (shown initially before user interaction) -->
+        <g v-if="centerPoint && !hoverState && !userInteracted">
           <circle
-            :cx="latestPoint.x"
-            :cy="latestPoint.y"
+            :cx="centerPoint.x"
+            :cy="centerPoint.y"
             r="4"
             class="fill-fm-accent stroke-fm-panelSoft"
             stroke-width="2"
           />
           <rect
-            :x="latestPoint.x + 8"
-            :y="latestPoint.y - 10"
-            :width="`${latestPoint.value.toFixed(1).length * 8 + 20}`"
+            :x="centerPoint.x + 8"
+            :y="centerPoint.y - 10"
+            :width="`${centerPoint.value.toFixed(1).length * 8 + 20}`"
             height="20"
             rx="4"
             class="fill-slate-900/90 stroke-fm-accent/40"
             stroke-width="1"
           />
           <text
-            :x="latestPoint.x + 14"
-            :y="latestPoint.y + 4"
+            :x="centerPoint.x + 14"
+            :y="centerPoint.y + 4"
             class="fill-fm-accent text-[10px] font-bold"
-          >{{ latestPoint.value.toFixed(1) }}°</text>
+          >{{ centerPoint.value.toFixed(1) }}°</text>
         </g>
 
         <!-- Hover dot -->
@@ -606,26 +751,40 @@ const latestPoint = computed(() => {
         />
       </svg>
 
-      <!-- Tooltip -->
+      <!-- Tooltip (hover) -->
       <div
         v-if="hoverState"
-        class="pointer-events-none absolute z-10 max-w-[300px] rounded-md border border-slate-700/60 bg-slate-950/95 px-3 py-2 text-xs text-fm-text shadow-panel"
-        :style="{
-          left: `${Math.max(8, Math.min(hoverState.x / width * 100, 82))}%`,
-          top: `${Math.max(6, (hoverState.y / chartHeight * 100) - 22)}%`
-        }"
+        class="pointer-events-none absolute z-10 max-w-[260px] rounded-md border border-slate-700/60 bg-slate-950/95 px-2.5 py-1.5 text-xs text-fm-text shadow-panel"
+        :style="tooltipStyle"
       >
         <div class="font-semibold text-fm-accent">
-          {{ hoverState.point.value.toFixed(2) }} °C
+          {{ hoverState.point.value.toFixed(1) }} °C
         </div>
         <div class="mt-0.5 text-fm-muted">
           {{ formatTooltipDate(hoverState.point.timestamp) }}
         </div>
       </div>
+
+      <!-- Center focus tooltip (shown initially before user interaction) -->
+      <div
+        v-if="centerPoint && !hoverState && !userInteracted"
+        class="pointer-events-none absolute z-10 max-w-[260px] rounded-md border border-slate-700/60 bg-slate-950/95 px-2.5 py-1.5 text-xs text-fm-text shadow-panel"
+        :style="{
+          left: Math.max(4, Math.min((centerPoint.x / width) * 100, 82)) + '%',
+          top: Math.max(6, ((centerPoint.y / chartHeight) * 100) - 22) + '%',
+        }"
+      >
+        <div class="font-semibold text-fm-accent">
+          {{ centerPoint.value.toFixed(1) }} °C
+        </div>
+        <div class="mt-0.5 text-fm-muted">
+          {{ formatTooltipDate(centerPoint.timestamp) }}
+        </div>
+      </div>
     </div>
 
     <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-fm-muted/50">
-      <span>Scroll: zoom | Drag: pan</span>
+      <span>Scroll: zoom | Drag: pan | Pinch: zoom</span>
       <span>{{ normalized[0] ? formatShortTime(normalized[0].timestamp) : "--" }}</span>
       <span>{{ normalized[normalized.length - 1] ? formatShortTime(normalized[normalized.length - 1].timestamp) : "--" }}</span>
     </div>

@@ -24,7 +24,7 @@ const sensorById = computed(() => new Map(sensorsStore.items.map((s) => [s.id, s
 const deviceById = computed(() => new Map(devicesStore.items.map((d) => [d.id, d])));
 
 const selectedSensorId = ref<number | null>(null);
-const selectedRange = ref<"LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "30d" | "CUSTOM">("LIVE");
+const selectedRange = ref<"LIVE" | "1h" | "6h" | "24h" | "7d" | "30d" | "CUSTOM">("1h");
 const customFrom = ref("");
 const customTo = ref("");
 const trendLoading = ref(false);
@@ -34,12 +34,11 @@ const historyPoints = ref<{ timestamp: string; value: number }[]>([]);
 const LIVE_WINDOW_MS = 60 * 60 * 1000;
 const LIVE_MAX_POINTS = 500;
 
-const rangeOptions: { key: "LIVE" | "1h" | "6h" | "24h" | "72h" | "7d" | "30d" | "CUSTOM"; label: string }[] = [
+const rangeOptions: { key: "LIVE" | "1h" | "6h" | "24h" | "7d" | "30d" | "CUSTOM"; label: string }[] = [
   { key: "LIVE", label: "LIVE" },
   { key: "1h", label: "1H" },
   { key: "6h", label: "6H" },
   { key: "24h", label: "24H" },
-  { key: "72h", label: "72H" },
   { key: "7d", label: "7D" },
   { key: "30d", label: "30D" },
   { key: "CUSTOM", label: "CUSTOM" },
@@ -167,13 +166,12 @@ function localDateTimeToIso(value: string): string | null {
   return date.toISOString();
 }
 
-function buildPresetRange(range: "1h" | "6h" | "24h" | "72h" | "7d" | "30d"): { from: string; to: string } {
+function buildPresetRange(range: "1h" | "6h" | "24h" | "7d" | "30d"): { from: string; to: string } {
   const to = new Date();
   const from = new Date(to);
   if (range === "1h") from.setHours(from.getHours() - 1);
   else if (range === "6h") from.setHours(from.getHours() - 6);
   else if (range === "24h") from.setHours(from.getHours() - 24);
-  else if (range === "72h") from.setHours(from.getHours() - 72);
   else if (range === "7d") from.setDate(from.getDate() - 7);
   else from.setDate(from.getDate() - 30);
   return { from: from.toISOString(), to: to.toISOString() };
@@ -203,7 +201,7 @@ async function loadTrendHistory(): Promise<void> {
       return;
     }
   } else {
-    const preset = buildPresetRange(selectedRange.value as "1h" | "6h" | "24h" | "72h" | "7d" | "30d");
+    const preset = buildPresetRange(selectedRange.value as "1h" | "6h" | "24h" | "7d" | "30d");
     from = preset.from;
     to = preset.to;
   }
@@ -358,12 +356,12 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- Time range controls -->
-    <div class="flex flex-wrap items-center gap-1.5">
+    <div class="range-buttons flex flex-wrap items-center gap-1.5">
       <button
         v-for="option in rangeOptions"
         :key="option.key"
         type="button"
-        class="rounded-md border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition"
+        class="range-btn rounded-md border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition"
         :class="selectedRange === option.key
           ? 'border-fm-accent/60 bg-fm-accent/15 text-fm-accent'
           : 'border-slate-700/50 bg-slate-900/60 text-fm-muted/70 hover:border-slate-500/50 hover:text-fm-text'"
@@ -430,5 +428,19 @@ onBeforeUnmount(() => {
 }
 .animate-spin {
   animation: spin 1s linear infinite;
+}
+
+/* Responsive range buttons: compact on mobile, normal on desktop */
+@media (max-width: 639px) {
+  .range-buttons {
+    gap: 0.25rem;
+  }
+  .range-btn {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    padding-top: 0.3rem;
+    padding-bottom: 0.3rem;
+    font-size: 9px;
+  }
 }
 </style>
